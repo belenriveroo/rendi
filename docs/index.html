@@ -1,20 +1,176 @@
 <!doctype html>
-<html lang="es">
+<html lang="es-UY">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Rendí · rendición de gastos</title>
-  <meta name="description" content="Sacale foto al ticket, la IA lo carga, el sistema chequea las reglas y Finanzas te reembolsa.">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b7a5e'/%3E%3Cpath d='M10 8h12v16l-3-2-3 2-3-2-3 2z' fill='white'/%3E%3C/svg%3E">
+  <title>Rendí · Rendición de gastos con IA: una foto y listo</title>
+  <meta name="description" content="Sacale foto al ticket y la IA lo carga. Rendí controla duplicados, IVA y topes, y lleva cada gasto del jefe a Finanzas hasta el reembolso. Demo gratis.">
+  <link rel="canonical" href="https://belenriveroo.github.io/rendi/">
+  <meta name="robots" content="index, follow">
+  <meta name="theme-color" content="#0b7a5e">
+
+  <!-- Cómo se ve el link al compartirlo (WhatsApp, LinkedIn, etc.) -->
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="es_UY">
+  <meta property="og:site_name" content="Rendí">
+  <meta property="og:title" content="Rendí · Rendición de gastos con una foto">
+  <meta property="og:description" content="La IA lee el ticket, el sistema chequea las reglas y Finanzas reembolsa. Sin papeles ni planillas.">
+  <meta property="og:url" content="https://belenriveroo.github.io/rendi/">
+  <meta property="og:image" content="https://belenriveroo.github.io/rendi/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Rendí: un ticket con el sello Aprobado">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="estilos.css">
+
+  <!-- Datos estructurados: le explican a Google qué es esto y cuáles son las preguntas frecuentes -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Rendí",
+    "applicationCategory": "BusinessApplication",
+    "operatingSystem": "Web",
+    "inLanguage": "es-UY",
+    "url": "https://belenriveroo.github.io/rendi/",
+    "description": "Rendición de gastos corporativos con IA: lectura automática de tickets, validación de reglas y flujo de aprobación hasta el reembolso.",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      { "@type": "Question", "name": "¿Qué tickets puede leer?",
+        "acceptedAnswer": { "@type": "Answer", "text": "e-Tickets y tickets comunes de Uruguay. La IA saca RUT, serie, número, fecha, comercio, montos, IVA y cada línea. Vos revisás antes de guardar." } },
+      { "@type": "Question", "name": "¿Qué pasa si un gasto supera el tope?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Lo podés enviar igual escribiendo una justificación. El jefe la ve junto al ticket y decide." } },
+      { "@type": "Question", "name": "¿Se reembolsan las bebidas alcohólicas?",
+        "acceptedAnswer": { "@type": "Answer", "text": "No. La IA las detecta y se descuentan solas del reembolso, pero el resto del ticket sigue su camino." } },
+      { "@type": "Question", "name": "¿Quién ve mis gastos?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Vos, tu jefe y Finanzas cuando ya lo aprobó tu jefe. Lo controla la base de datos, no la pantalla." } },
+      { "@type": "Question", "name": "¿Cuánto cuesta?",
+        "acceptedAnswer": { "@type": "Answer", "text": "La demo es gratis. Usarlo en una empresa cuesta centavos de dólar por ticket leído por la IA." } }
+    ]
+  }
+  </script>
 </head>
-<body>
-  <div id="app"><p class="cargando">Cargando Rendí…</p></div>
-  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<body class="landing">
+  <a class="saltar" href="#contenido">Saltar al contenido</a>
+
+  <header class="l-top">
+    <div class="l-wrap l-barra">
+      <a class="marca" href="./" aria-label="Rendí, inicio">Rendí<span>.</span></a>
+      <nav class="l-nav" aria-label="Secciones">
+        <a href="#preguntas">Preguntas frecuentes</a>
+      </nav>
+      <div class="l-acciones">
+        <button class="btn-icono" type="button" data-tema aria-label="Cambiar entre modo claro y oscuro"></button>
+        <button class="btn-p" type="button" data-abrir-login>Iniciar sesión</button>
+      </div>
+    </div>
+  </header>
+
+  <main id="contenido">
+    <section class="l-hero l-wrap" aria-labelledby="titulo">
+      <div class="l-hero-texto">
+        <p class="eyebrow">Rendición de gastos con IA</p>
+        <h1 id="titulo">Rendí tus gastos con una foto.</h1>
+        <p class="l-bajada">Le sacás foto al ticket, la IA lo carga, el sistema chequea las reglas y Finanzas te reembolsa. Sin papeles, sin planillas y sin tipear dos veces.</p>
+        <div class="fila">
+          <button class="btn-p btn-grande" type="button" data-abrir-login>Probar la demo</button>
+          <a class="btn btn-grande" href="#preguntas">Preguntas frecuentes</a>
+        </div>
+        <ul class="l-sellos">
+          <li>Lee e-Tickets de Uruguay</li>
+          <li>9 reglas automáticas</li>
+          <li>Funciona en el celular</li>
+        </ul>
+      </div>
+      <div class="l-hero-visual" aria-hidden="true">
+        <div class="ticket-demo">
+          <p class="c b">PARADOR DEL LITORAL</p>
+          <p class="c">RUT 210000000101 · e-Ticket A 1201</p>
+          <hr>
+          <p class="fl"><span>Milanesa con papas</span><span>520,00</span></p>
+          <p class="fl"><span>Ensalada mixta</span><span>280,00</span></p>
+          <p class="fl tachado"><span>Copa de vino</span><span>380,00</span></p>
+          <hr>
+          <p class="fl b"><span>TOTAL $</span><span>1.180,00</span></p>
+          <span class="sello">APROBADO</span>
+        </div>
+        <div class="globo">La IA leyó 8 campos · <b>sin alertas</b></div>
+      </div>
+    </section>
+
+    <section id="preguntas" class="l-seccion l-wrap" aria-labelledby="t-faq">
+      <h2 id="t-faq">Preguntas frecuentes</h2>
+      <div class="faq">
+        <details><summary>¿Qué tickets puede leer?</summary><p>e-Tickets y tickets comunes de Uruguay. La IA saca RUT, serie, número, fecha, comercio, montos, IVA y cada línea. Vos revisás antes de guardar.</p></details>
+        <details><summary>¿Qué pasa si un gasto supera el tope?</summary><p>Lo podés enviar igual escribiendo una justificación. El jefe la ve junto al ticket y decide.</p></details>
+        <details><summary>¿Se reembolsan las bebidas alcohólicas?</summary><p>No. La IA las detecta y se descuentan solas del reembolso, pero el resto del ticket sigue su camino.</p></details>
+        <details><summary>¿Quién ve mis gastos?</summary><p>Vos, tu jefe y Finanzas cuando ya lo aprobó tu jefe. Lo controla la base de datos, no la pantalla.</p></details>
+        <details><summary>¿Cuánto cuesta?</summary><p>La demo es gratis. Usarlo en una empresa cuesta centavos de dólar por ticket leído por la IA.</p></details>
+      </div>
+    </section>
+
+    <section class="l-cta l-wrap" aria-labelledby="t-cta">
+      <h2 id="t-cta">Probalo con las cuentas demo</h2>
+      <p>Entrá como la empleada, el jefe o Finanzas y seguí un gasto de punta a punta.</p>
+      <button class="btn-p btn-grande" type="button" data-abrir-login>Iniciar sesión</button>
+    </section>
+  </main>
+
+  <footer class="l-pie">
+    <div class="l-wrap">
+      <p><b>Rendí</b> · Trabajo de Introducción a la Tecnología y Cultura Digital 2026.</p>
+      <p class="muted small">Demo con datos ficticios. No subas tickets con datos de otras personas.</p>
+    </div>
+  </footer>
+
+  <!-- Iniciar sesión -->
+  <dialog id="login" class="dialogo" aria-labelledby="t-login">
+    <form method="dialog" class="dlg-cerrar-form"><button class="btn-icono" aria-label="Cerrar">×</button></form>
+    <div data-vista="entrar">
+      <h2 id="t-login">Iniciar sesión</h2>
+      <form id="form-login" class="lista" novalidate>
+        <label>Email<input name="email" type="email" autocomplete="username" required></label>
+        <label>Contraseña
+          <span class="campo-clave"><input name="clave" type="password" autocomplete="current-password" required>
+          <button type="button" class="btn-link" data-ver-clave>Mostrar</button></span>
+        </label>
+        <p class="error" role="alert" hidden></p>
+        <button class="btn-p btn-grande">Entrar</button>
+        <button type="button" class="btn-link" data-ir="olvide">Olvidé mi contraseña</button>
+      </form>
+      <div class="demo-cuentas">
+        <p class="small muted">¿Venís a probar? Elegí una cuenta demo y tocá <b>Entrar</b>:</p>
+        <div class="fila" id="cuentas-demo"></div>
+      </div>
+    </div>
+    <div data-vista="olvide" hidden>
+      <h2>Recuperar la contraseña</h2>
+      <p class="small muted">Te mandamos un link por email para crear una contraseña nueva.</p>
+      <form id="form-olvide" class="lista" novalidate>
+        <label>Email<input name="email" type="email" autocomplete="email" required></label>
+        <p class="error" role="alert" hidden></p>
+        <p class="ok" role="status" hidden></p>
+        <button class="btn-p btn-grande">Mandarme el link</button>
+        <button type="button" class="btn-link" data-ir="entrar">Volver a iniciar sesión</button>
+      </form>
+      <p class="xs muted">Las cuentas demo usan emails de ejemplo y no reciben correos.</p>
+    </div>
+  </dialog>
+
   <script src="config.js"></script>
-  <script type="module" src="app.js"></script>
+  <script type="module" src="landing.js"></script>
 </body>
 </html>

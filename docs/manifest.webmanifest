@@ -1,0 +1,16 @@
+{
+  "name": "Rendí · rendición de gastos",
+  "short_name": "Rendí",
+  "description": "Sacale foto al ticket, la IA lo carga y Finanzas te reembolsa.",
+  "lang": "es-UY",
+  "start_url": "app.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f5f1",
+  "theme_color": "#0b7a5e",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
