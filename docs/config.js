@@ -4,12 +4,12 @@
 // =====================================================================
 window.RENDI_CONFIG = {
   // 1. Project URL (algo como https://abcdxyz.supabase.co)
-  SUPABASE_URL: "https://TU-PROYECTO.supabase.co",
+  SUPABASE_URL: "https://xomgcxbwtzefiwxcbpgk.supabase.co",
 
   // 2. La clave PÚBLICA: "anon public" o "publishable" (empieza con eyJ... o con sb_publishable_...)
   //    Esta clave puede estar a la vista: la seguridad la ponen las reglas de la base.
   //    NUNCA pongas acá la "service_role" ni la "secret".
-  SUPABASE_KEY: "PEGÁ-ACÁ-LA-CLAVE-PÚBLICA",
+  SUPABASE_KEY: "sb_publishable_xgm0Fvoi1-BoT2QSWa1MjQ_nwJlkTfe",
 
   // 3. Usuarios demo que se muestran en la pantalla de inicio (tienen que existir en Supabase)
   USUARIOS_DEMO: [
