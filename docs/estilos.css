@@ -325,3 +325,11 @@ table.t .r { text-align: right; }
 .toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: var(--ink); color: var(--paper); padding: 11px 18px; border-radius: 10px; font-size: .92rem; z-index: 60; max-width: calc(100% - 32px); box-shadow: var(--shadow); }
 .toast.mal { background: var(--bad); color: #fff; }
 @media (max-width: 900px) { .toast { bottom: calc(80px + env(safe-area-inset-bottom)); } }
+
+/* ---------- Tipo de comprobante: e-Ticket o pago con POS */
+.tipo-comp { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.tipo-comp legend { font-size: .85rem; color: var(--ink-2); margin-bottom: 6px; padding: 0; }
+.tipo-comp .opcion { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border: 1px solid var(--rule); border-radius: 999px; cursor: pointer; font-size: .9rem; background: var(--paper); }
+.tipo-comp .opcion:has(input:checked) { border-color: var(--stamp); background: var(--stamp-soft); color: var(--stamp); font-weight: 600; }
+.tipo-comp input[type="radio"] { width: 18px; height: 18px; min-height: 0; padding: 0; flex: none; accent-color: var(--stamp); margin: 0; }
+form[data-tipo="cfe"] .solo-pago, form[data-tipo="pago"] .solo-cfe { display: none; }

@@ -21,10 +21,13 @@ const iniciales = (n) => String(n || "?").split(/\s+/).filter(Boolean).slice(0, 
 const reembolsable = (items) => (items || []).filter((i) => i.reembolsable && !i.es_alcohol && !i.no_reconocido_por).reduce((s, i) => s + Number(i.importe), 0);
 const mesActual = new Date().toISOString().slice(0, 7);
 const CATEGORIAS = { comidas: "Comidas", traslados: "Traslados", alojamiento: "Alojamiento", otros: "Otros" };
-const CAMPOS = { rut_emisor: "RUT", serie: "Serie", numero: "Número", fecha: "Fecha", comercio: "Comercio", neto: "Neto", iva: "IVA", total: "Total" };
+const CAMPOS = { rut_emisor: "RUT", serie: "Serie", numero: "Número", fecha: "Fecha", comercio: "Comercio", neto: "Neto", iva: "IVA", total: "Total",
+  nro_operacion: "N.º de operación", tipo_comprobante: "Tipo de comprobante" };
+const TIPOS = { cfe: "e-Ticket o e-Factura", pago: "Comprobante de pago (POS)" };
+const MEDIOS = ["Mercado Pago", "OCA", "Handy", "Getnet", "VISA", "Mastercard", "BROU", "Itaú", "Santander", "Scotiabank"];
 const REGLAS = { datos: "Datos incompletos", fecha: "Fecha", suma_lineas: "Suma de líneas", iva: "IVA", duplicado: "Posible duplicado",
   alcohol: "Alcohol", tope_categoria: "Tope por categoría", plazo: "Fuera de plazo", tope_mensual: "Tope mensual",
-  ia_confianza: "Lectura dudosa", corregido: "Corregido a mano" };
+  ia_confianza: "Lectura dudosa", corregido: "Corregido a mano", sin_cfe: "Sin e-Ticket" };
 
 const EST_R = {
   borrador: ["Borrador", "e-info"], pendiente_jefe: ["Pendiente jefe", "e-pend"], devuelta: ["Devuelta para corregir", "e-mal"],
@@ -429,10 +432,11 @@ async function subirAvatar(file) {
 // ---------------------------------------------------------------- totales (Finanzas)
 async function vistaTotales() {
   const gs = await q(sb.from("gastos")
-    .select("id,fecha,categoria,estado,comercio,perfiles(nombre),gasto_items(importe,reembolsable,es_alcohol,no_reconocido_por),rendiciones(titulo,estado)"));
+    .select("id,fecha,categoria,estado,comercio,tipo_comprobante,perfiles(nombre),gasto_items(importe,reembolsable,es_alcohol,no_reconocido_por),rendiciones(titulo,estado)"));
   const filas = gs.filter((g) => ["aprobado", "aprobado_parcial"].includes(g.estado) && ["aprobada", "aprobada_parcial", "reembolsada"].includes(g.rendiciones?.estado))
     .map((g) => ({ persona: g.perfiles?.nombre || "—", categoria: CATEGORIAS[g.categoria] || g.categoria, mes: String(g.fecha || "").slice(0, 7) || "sin fecha",
-      monto: reembolsable(g.gasto_items), pagado: g.rendiciones.estado === "reembolsada", comercio: g.comercio, rendicion: g.rendiciones.titulo, fecha: g.fecha }));
+      monto: reembolsable(g.gasto_items), pagado: g.rendiciones.estado === "reembolsada", comercio: g.comercio, rendicion: g.rendiciones.titulo, fecha: g.fecha,
+      comprobante: g.tipo_comprobante === "pago" ? "pago POS (sin e-Ticket)" : "e-Ticket / e-Factura" }));
   S.totales = filas;
   const suma = (a) => a.reduce((s, f) => s + f.monto, 0);
   const agrupar = (k) => Object.entries(filas.reduce((a, f) => ((a[f[k]] = (a[f[k]] || 0) + f.monto), a), {})).sort((a, b) => b[1] - a[1]);
@@ -446,8 +450,8 @@ async function vistaTotales() {
 }
 function descargarCsv() {
   const f = S.totales || [];
-  const lineas = [["fecha", "persona", "rendicion", "comercio", "categoria", "monto_reembolsable", "reembolsado"]]
-    .concat(f.map((x) => [x.fecha, x.persona, x.rendicion, x.comercio, x.categoria, x.monto, x.pagado ? "si" : "no"]));
+  const lineas = [["fecha", "persona", "rendicion", "comercio", "comprobante", "categoria", "monto_reembolsable", "reembolsado"]]
+    .concat(f.map((x) => [x.fecha, x.persona, x.rendicion, x.comercio, x.comprobante, x.categoria, x.monto, x.pagado ? "si" : "no"]));
   const csv = lineas.map((l) => l.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(";")).join("\n");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv" })); a.download = "rendi-totales.csv"; a.click();
@@ -590,7 +594,7 @@ function tarjetaGasto(g, alertas, lectura, { editable, jefeDecide, revisor }) {
   const corr = new Set(lectura?.campos_corregidos || []);
   const leido = lectura?.leido || {};
   const valor = (k) => ["neto", "iva", "total"].includes(k) ? plata(g[k]) : k === "fecha" ? fecha(g.fecha) : esc(g[k] ?? "—");
-  const antes = (k) => { const v = leido[k]; return v == null || v === "" ? "vacío" : ["neto", "iva", "total"].includes(k) ? plata(v) : k === "fecha" ? fecha(v) : esc(v); };
+  const antes = (k) => { const v = leido[k]; return v == null || v === "" ? "vacío" : k === "tipo_comprobante" ? esc(TIPOS[v] || v) : ["neto", "iva", "total"].includes(k) ? plata(v) : k === "fecha" ? fecha(v) : esc(v); };
   const dato = (k, etiqueta, html) => `<div><dt>${etiqueta}</dt><dd class="${corr.has(k) ? "corregido" : ""}">${html ?? valor(k)}${corr.has(k) ? `<span class="antes">Corregido a mano · la IA leyó: ${antes(k)}</span>` : ""}</dd></div>`;
   const nAlertas = alertas.length;
   const alertasHtml = nAlertas ? alertas.map((a) => {
@@ -603,9 +607,11 @@ function tarjetaGasto(g, alertas, lectura, { editable, jefeDecide, revisor }) {
   return `<article class="card" id="g-${g.id}">
     <div class="gasto">${fotoTicket(g.foto_path, g.comercio)}
       <div class="lista">
-        <div class="fila entre"><h3>${esc(g.comercio || "Sin comercio")}</h3><div class="fila">${lectura?.confianza != null ? `<span class="etq ${Number(lectura.confianza) < 0.7 ? "warn" : ""}">IA ${Math.round(lectura.confianza * 100)} %</span>` : `<span class="etq">Carga manual</span>`}${pill(EST_G, g.estado)}</div></div>
-        <dl class="datos">${dato("fecha", "Fecha")}${dato("categoria", "Categoría", esc(CATEGORIAS[g.categoria] || g.categoria))}${dato("rut_emisor", "RUT")}
-          ${dato("numero", "Serie y número", esc(`${g.serie || ""} ${g.numero || "—"}`.trim()))}${dato("neto", "Neto")}${dato("iva", "IVA")}${dato("total", "Total")}
+        <div class="fila entre"><h3>${esc(g.comercio || "Sin comercio")}</h3><div class="fila">${g.tipo_comprobante === "pago" ? `<span class="etq warn">Sin e-Ticket</span>` : ""}${lectura?.confianza != null ? `<span class="etq ${Number(lectura.confianza) < 0.7 ? "warn" : ""}">IA ${Math.round(lectura.confianza * 100)} %</span>` : `<span class="etq">Carga manual</span>`}${pill(EST_G, g.estado)}</div></div>
+        <dl class="datos">${dato("fecha", "Fecha")}${dato("categoria", "Categoría", esc(CATEGORIAS[g.categoria] || g.categoria))}
+          ${g.tipo_comprobante === "pago"
+            ? `${dato("tipo_comprobante", "Comprobante", esc("Pago con POS" + (g.medio_pago ? " · " + g.medio_pago : "")))}${dato("nro_operacion", "N.º de operación")}${dato("total", "Total")}`
+            : `${dato("rut_emisor", "RUT")}${dato("numero", "Serie y número", esc(`${g.serie || ""} ${g.numero || "—"}`.trim()))}${dato("neto", "Neto")}${dato("iva", "IVA")}${dato("total", "Total")}`}
           <div><dt>Se reembolsa</dt><dd><b>${plata(reembolsable(g.gasto_items))}</b></dd></div></dl>
         <div class="alertas">${alertasHtml}</div>
         <div class="tabla-wrap"><table class="lineas"><thead><tr><th>Línea</th><th class="r">Importe</th>${gEditable ? '<th class="c">Personal</th>' : ""}${decide ? '<th class="c">No reconocer</th>' : ""}</tr></thead><tbody>
@@ -616,7 +622,7 @@ function tarjetaGasto(g, alertas, lectura, { editable, jefeDecide, revisor }) {
             ${decide ? `<td class="c">${i.es_alcohol ? "—" : `<input type="checkbox" class="nr-${g.id}" value="${i.id}" aria-label="No reconocer ${esc(i.descripcion)}">`}</td>` : ""}
           </tr>`).join("") || `<tr><td class="muted" colspan="3">Sin líneas</td></tr>`}</tbody></table></div>
         ${gEditable ? `<label>Justificación${necesita ? ' <b class="error">· necesaria para enviar</b>' : " (opcional)"}
-            <textarea data-just="${g.id}" placeholder="¿Por qué se pasa del tope o no cierra? Ej.: cena con el cliente de Ceibo">${esc(g.justificacion || "")}</textarea></label>
+            <textarea data-just="${g.id}" placeholder="${g.tipo_comprobante === "pago" ? "¿Por qué no hay e-Ticket? Ej.: el taxi solo da el comprobante del POS" : "¿Por qué se pasa del tope o no cierra? Ej.: cena con el cliente de Ceibo"}">${esc(g.justificacion || "")}</textarea></label>
           <div class="fila"><button data-a="just" data-gasto="${g.id}">Guardar justificación</button><button data-a="editar" data-gasto="${g.id}">Corregir datos</button>
             <button class="btn-mal" data-a="borrar" data-gasto="${g.id}">Borrar ticket</button></div>`
           : g.justificacion && !alertas.some((a) => claseAlerta(a) === "justified") ? `<p class="small"><b>Justificación:</b> ${esc(g.justificacion)}</p>` : ""}
@@ -629,7 +635,7 @@ function tarjetaGasto(g, alertas, lectura, { editable, jefeDecide, revisor }) {
 }
 
 // ---------------------------------------------------------------- lectura con IA y formulario de revisión
-const vacio = () => ({ comercio: "", fecha: "", rut_emisor: "", serie: "", numero: "", categoria: "otros", neto: "", iva: "", total: "", justificacion: "", items: [{ descripcion: "", importe: "" }] });
+const vacio = () => ({ tipo_comprobante: "cfe", medio_pago: "", nro_operacion: "", comercio: "", fecha: "", rut_emisor: "", serie: "", numero: "", categoria: "otros", neto: "", iva: "", total: "", justificacion: "", items: [{ descripcion: "", importe: "" }] });
 async function achicar(file, lado = 1600) {
   try {
     const bmp = await createImageBitmap(file);
@@ -640,6 +646,33 @@ async function achicar(file, lado = 1600) {
     return await new Promise((res) => c.toBlob((b) => res(b || file), "image/jpeg", 0.82));
   } catch { return file; }
 }
+// Llama a la función de IA. Si se corta la conexión (señal del celular, la función tardó demasiado), reintenta una vez sola.
+const SIN_CONEXION = "Se cortó la conexión con el lector de tickets (puede ser la señal del celular o que la IA tardó demasiado)";
+async function invocarLector(path) {
+  for (let intento = 1; intento <= 2; intento++) {
+    const espera = new Promise((_, no) => setTimeout(() => no(new Error("tiempo")), 75_000));
+    let r;
+    try { r = await Promise.race([sb.functions.invoke("leer-ticket", { body: { path } }), espera]); }
+    catch { r = { error: { name: "FunctionsFetchError", message: "tiempo" } }; }
+    const { data, error } = r;
+    if (!error) { if (data?.error) throw new Error(data.error); return data; }
+    const deRed = error.name === "FunctionsFetchError" || error.name === "FunctionsRelayError" || /failed to send|fetch|tiempo/i.test(error.message || "");
+    if (deRed) { if (intento === 1) { await new Promise((ok) => setTimeout(ok, 2000)); continue; } throw new Error(SIN_CONEXION); }
+    let m = error.message; try { const j = await error.context.json(); m = j.error || m; } catch { /* sin detalle */ }
+    throw new Error(m);
+  }
+}
+async function leerConIA(rev) {
+  try {
+    const data = await invocarLector(rev.path);
+    rev.datos = { ...vacio(), ...data.datos, items: data.datos.items?.length ? data.datos.items : vacio().items };
+    rev.lectura_id = data.lectura_id; rev.modelo = data.modelo; rev.error = null;
+  } catch (e) {
+    rev.error = "No se pudo leer automáticamente: " + msg(e) + ". Tocá «Reintentar lectura» o completalo a mano.";
+    rev.datos = rev.datos || vacio();
+  }
+  rev.estado = "form"; pintarRev(rev);
+}
 async function leerFoto(rev, file) {
   try {
     const blob = await achicar(file);
@@ -648,16 +681,11 @@ async function leerFoto(rev, file) {
     const up = await sb.storage.from("tickets").upload(path, blob, { contentType: blob.type || "image/jpeg", upsert: false });
     if (up.error) throw up.error;
     rev.path = path;
-    const { data, error } = await sb.functions.invoke("leer-ticket", { body: { path } });
-    if (error) { let m = error.message; try { const j = await error.context.json(); m = j.error || m; } catch { /* sin detalle */ } throw new Error(m); }
-    if (data?.error) throw new Error(data.error);
-    rev.datos = { ...vacio(), ...data.datos, items: data.datos.items?.length ? data.datos.items : vacio().items };
-    rev.lectura_id = data.lectura_id; rev.modelo = data.modelo;
   } catch (e) {
-    rev.error = "No se pudo leer automáticamente (" + msg(e) + "). Completalo a mano.";
-    rev.datos = rev.datos || vacio();
+    rev.error = "No se pudo subir la foto (" + msg(e) + "). Revisá la conexión y volvé a elegirla, o completalo a mano.";
+    rev.datos = rev.datos || vacio(); rev.estado = "form"; pintarRev(rev); return;
   }
-  rev.estado = "form"; pintarRev(rev);
+  await leerConIA(rev);
 }
 function subirArchivos(files) {
   for (const file of files) {
@@ -687,31 +715,41 @@ function htmlRev(rev) {
   const fotoHtml = rev.preview ? `<button type="button" class="foto ${rev.estado === "leyendo" ? "leyendo" : ""}" data-ver-local="${esc(rev.preview)}" aria-label="Ver la foto en grande"><img src="${esc(rev.preview)}" alt="Ticket subido"><span class="lupa">${icono("zoomin")} Ver</span></button>` : `<div class="foto">Carga manual</div>`;
   if (rev.estado === "leyendo") return `<div class="card"><div class="gasto">${fotoHtml}<div class="lista"><h3>La IA está leyendo el ticket…</h3><p class="small muted">Busca RUT, serie, número, fecha, comercio, montos, IVA y cada línea.</p></div></div></div>`;
   const d = rev.datos;
-  return `<form class="card" data-form="rev" data-key="${rev.key}"><div class="gasto">${fotoHtml}<div class="lista">
+  return `<form class="card" data-form="rev" data-key="${rev.key}" data-tipo="${d.tipo_comprobante === "pago" ? "pago" : "cfe"}">
+    <datalist id="medios-pago">${MEDIOS.map((m) => `<option value="${m}">`).join("")}</datalist><div class="gasto">${fotoHtml}<div class="lista">
     <div class="fila entre"><h3>${rev.gastoId ? "Corregir ticket" : "Revisá lo que leyó la IA"}</h3>${rev.modelo ? `<span class="xs muted">${esc(rev.modelo)}${d.confianza ? ` · confianza ${Math.round(d.confianza * 100)} %` : ""}</span>` : ""}</div>
-    ${rev.error ? `<div class="alerta warn"><span class="nivel">Atención</span><span>${esc(rev.error)}</span></div>` : ""}
+    ${rev.error ? `<div class="alerta warn"><span class="nivel">Atención</span><span>${esc(rev.error)}</span></div>
+      ${rev.path && !rev.gastoId ? `<div><button type="button" data-a="reintentar" data-key="${rev.key}">${icono("refresh")} Reintentar lectura</button></div>` : ""}` : ""}
+    <fieldset class="tipo-comp"><legend>Tipo de comprobante</legend>
+      ${Object.entries(TIPOS).map(([v, t]) => `<label class="opcion"><input type="radio" name="tipo_comprobante" value="${v}" ${(d.tipo_comprobante || "cfe") === v ? "checked" : ""}>${t}</label>`).join("")}
+    </fieldset>
+    <p class="alerta info solo-pago"><span class="nivel">POS</span><span>Un comprobante de pago no es un e-Ticket: no tiene RUT ni IVA. Se puede rendir, pero vas a tener que explicar por qué no hay e-Ticket. Si podés, pedíselo al comercio.</span></p>
     <div class="campos">
       <label>Comercio<input name="comercio" value="${esc(d.comercio)}" required></label>
       <label>Fecha<input name="fecha" type="date" value="${esc(d.fecha)}" required></label>
       <label>Categoría<select name="categoria">${Object.entries(CATEGORIAS).map(([v, t]) => `<option value="${v}" ${d.categoria === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
-      <label>RUT emisor<input name="rut_emisor" inputmode="numeric" value="${esc(d.rut_emisor)}"></label>
-      <label>Serie<input name="serie" value="${esc(d.serie)}"></label>
-      <label>Número<input name="numero" value="${esc(d.numero)}"></label>
-      <label>Neto (sin IVA)<input name="neto" inputmode="decimal" value="${esc(d.neto)}"></label>
-      <label>IVA<input name="iva" inputmode="decimal" value="${esc(d.iva)}"></label>
+      <label class="solo-pago">Medio de pago<input name="medio_pago" list="medios-pago" value="${esc(d.medio_pago)}" placeholder="Mercado Pago, OCA…"></label>
+      <label class="solo-pago">N.º de operación<input name="nro_operacion" inputmode="numeric" value="${esc(d.nro_operacion)}"></label>
+      <label class="solo-cfe">RUT emisor<input name="rut_emisor" inputmode="numeric" value="${esc(d.rut_emisor)}"></label>
+      <label class="solo-cfe">Serie<input name="serie" value="${esc(d.serie)}"></label>
+      <label class="solo-cfe">Número<input name="numero" value="${esc(d.numero)}"></label>
+      <label class="solo-cfe">Neto (sin IVA)<input name="neto" inputmode="decimal" value="${esc(d.neto)}"></label>
+      <label class="solo-cfe">IVA<input name="iva" inputmode="decimal" value="${esc(d.iva)}"></label>
       <label>Total<input name="total" inputmode="decimal" value="${esc(d.total)}" required></label>
     </div>
     <div class="lista items">${(d.items || []).map(filaItem).join("")}</div>
     <div class="fila entre"><button type="button" class="btn-link" data-a="agregar-linea">+ Agregar línea</button><span class="small suma"></span></div>
-    <label>Justificación (si se pasa del tope o algo no cierra)<textarea name="justificacion">${esc(d.justificacion)}</textarea></label>
+    <label>Justificación (si se pasa del tope, algo no cierra o no hay e-Ticket)<textarea name="justificacion">${esc(d.justificacion)}</textarea></label>
     <div class="fila"><button class="btn-p">Guardar ticket</button><button type="button" data-a="descartar" data-key="${rev.key}">Descartar</button></div>
   </div></div></form>`;
 }
 function leerForm(form) {
   const v = (n) => form.querySelector(`[name="${n}"]`)?.value ?? "";
+  const pago = form.querySelector('[name="tipo_comprobante"]:checked')?.value === "pago";
   return {
-    comercio: v("comercio").trim(), fecha: v("fecha"), categoria: v("categoria"), rut_emisor: v("rut_emisor").replace(/\D/g, ""),
-    serie: v("serie").trim(), numero: v("numero").trim(), neto: numero(v("neto")), iva: numero(v("iva")), total: numero(v("total")),
+    tipo_comprobante: pago ? "pago" : "cfe", medio_pago: pago ? v("medio_pago").trim() : "", nro_operacion: pago ? v("nro_operacion").replace(/[^\dA-Za-z-]/g, "") : "",
+    comercio: v("comercio").trim(), fecha: v("fecha"), categoria: v("categoria"), rut_emisor: pago ? "" : v("rut_emisor").replace(/\D/g, ""),
+    serie: pago ? "" : v("serie").trim(), numero: pago ? "" : v("numero").trim(), neto: pago ? null : numero(v("neto")), iva: pago ? null : numero(v("iva")), total: numero(v("total")),
     justificacion: v("justificacion").trim(),
     items: [...form.querySelectorAll(".it-row")].map((row) => {
       const alc = row.querySelector('[data-f="es_alcohol"]').checked;
@@ -762,6 +800,10 @@ const acciones = {
   manual: () => { const rev = { key: crypto.randomUUID(), rendId: S.rendId, estado: "form", datos: vacio() }; S.revisiones.push(rev); pintarRev(rev); },
   "agregar-linea": (b) => b.closest("form").querySelector(".items").insertAdjacentHTML("beforeend", filaItem()),
   "quitar-linea": (b) => { const box = b.closest("[data-rev]"); b.closest(".it-row").remove(); actualizarSuma(box); },
+  reintentar: (b) => {
+    const rev = S.revisiones.find((r) => r.key === b.dataset.key); if (!rev) return;
+    rev.estado = "leyendo"; rev.error = null; pintarRev(rev); leerConIA(rev);
+  },
   descartar: (b) => { S.revisiones = S.revisiones.filter((r) => r.key !== b.dataset.key); b.closest("[data-rev]").remove(); },
   editar: (b) => {
     const g = S.detalle.gastos.find((x) => x.id === Number(b.dataset.gasto));
@@ -807,6 +849,11 @@ app.addEventListener("change", (e) => {
   if (e.target.id === "archivos" && e.target.files.length) { subirArchivos([...e.target.files]); e.target.value = ""; }
   if (e.target.id === "foto-perfil" && e.target.files[0]) {
     subirAvatar(e.target.files[0]).then(() => { toast("Foto actualizada"); render(); }).catch((err) => toast(msg(err), true));
+  }
+  if (e.target.matches('[name="tipo_comprobante"]')) {
+    const form = e.target.closest("form"); form.dataset.tipo = e.target.value;
+    if (e.target.value === "pago" && form.querySelector('[name="categoria"]').value === "otros" && /taxi|uber|cabify|remise/i.test(form.querySelector('[name="comercio"]').value))
+      form.querySelector('[name="categoria"]').value = "traslados";
   }
   if (e.target.matches('[data-f="es_alcohol"]')) {
     const per = e.target.closest(".it-row").querySelector('[data-f="personal"]');
