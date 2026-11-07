@@ -333,3 +333,50 @@ table.t .r { text-align: right; }
 .tipo-comp .opcion:has(input:checked) { border-color: var(--stamp); background: var(--stamp-soft); color: var(--stamp); font-weight: 600; }
 .tipo-comp input[type="radio"] { width: 18px; height: 18px; min-height: 0; padding: 0; flex: none; accent-color: var(--stamp); margin: 0; }
 form[data-tipo="cfe"] .solo-pago, form[data-tipo="pago"] .solo-cfe { display: none; }
+
+/* ---------- Eliminar borradores: deslizar (celular), tachito y selección (compu) */
+.fila-wrap { position: relative; border-radius: var(--r); }
+.fila-wrap.borrable { overflow: hidden; background: #c62f25; }
+.fila-wrap .fila-r { position: relative; z-index: 1; transition: transform .22s ease; }
+.fila-wrap.arrastrando .fila-r { transition: none; }
+.borrar-atras { position: absolute; inset: 0 0 0 auto; width: 92px; z-index: 0; border: 0; border-radius: 0; min-height: 0;
+  background: #c62f25; color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: .8rem; font-weight: 600; }
+.borrar-atras .ico { width: 22px; height: 22px; color: #fff; }
+.borrar-hover { display: none; }
+.fila-wrap .sel { display: none; }
+.peligro.btn-link { color: var(--bad); display: inline-flex; align-items: center; gap: 6px; }
+.peligro.btn-link .ico { width: 16px; height: 16px; }
+.btn-mal:disabled { opacity: .45; cursor: not-allowed; }
+
+/* Compu (mouse): tachito al pasar por arriba + modo selección; sin deslizar */
+@media (hover: hover) and (pointer: fine) {
+  .fila-wrap.borrable { background: none; overflow: visible; }
+  .borrar-atras, .pista-desliza { display: none; }
+  .borrar-hover { display: grid; place-items: center; position: absolute; right: 10px; top: 50%; transform: translateY(-50%); z-index: 2;
+    width: 34px; height: 34px; min-height: 0; padding: 0; border-radius: 8px; border: 1px solid var(--rule); background: var(--sheet); color: var(--bad); opacity: 0; transition: opacity .15s; }
+  .borrar-hover .ico { width: 17px; height: 17px; }
+  .fila-wrap.borrable:hover .borrar-hover, .borrar-hover:focus-visible { opacity: 1; }
+  .fila-wrap.borrable:hover .fila-r .lado > .ico { visibility: hidden; }
+  .borrar-hover:hover { background: var(--bad-soft); border-color: var(--bad); }
+}
+.barra-sel { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.barra-sel .sel-on { display: none; }
+.seleccionando .barra-sel { padding: 10px 14px; border: 1px solid var(--rule); border-radius: var(--r); background: var(--sheet); }
+.seleccionando .barra-sel .sel-off { display: none; }
+.seleccionando .barra-sel .sel-on { display: inline-flex; align-items: center; gap: 8px; }
+.seleccionando .barra-sel .fila { margin-left: auto; }
+.seleccionando .borrar-hover, .seleccionando .borrar-atras { display: none; }
+.seleccionando .fila-wrap.borrable { background: none; }
+.seleccionando .fila-wrap.borrable .sel { display: grid; place-items: center; position: absolute; left: 0; top: 0; bottom: 0; width: 44px; z-index: 2; cursor: pointer; }
+.seleccionando .fila-wrap.borrable .fila-r { padding-left: 48px; }
+.seleccionando .fila-wrap.borrable:has(:checked) .fila-r { border-color: var(--bad); background: var(--bad-soft); }
+.seleccionando .fila-wrap:not(.borrable) { opacity: .5; }
+.sel input, .barra-sel input[type="checkbox"] { width: 18px; height: 18px; min-height: 0; padding: 0; margin: 0; accent-color: var(--bad); }
+/* En el celular la barra de selección también funciona, pero se oculta hasta tocar "Seleccionar" */
+@media (pointer: coarse) { .barra-sel .sel-off { font-size: .85rem; } }
+@media (prefers-reduced-motion: reduce) { .fila-wrap .fila-r { transition: none; } }
+@media (hover: hover) and (pointer: fine) {
+  .fila-wrap.borrable .fila-r { padding-right: 54px; }
+  .fila-wrap.borrable .fila-r .lado > .ico { display: none; }
+}
+.fila-wrap, .fila-wrap button { -webkit-tap-highlight-color: transparent; }

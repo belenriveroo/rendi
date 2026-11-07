@@ -250,7 +250,7 @@ const TITULOS = { inicio: "Inicio", nueva: "Nueva rendición", rendiciones: "Mis
 
 async function cargarRends() {
   S.rends = await q(sb.from("rendiciones")
-    .select("id,titulo,estado,creada,enviada,total_aprobado,empleado_id,perfiles(nombre,foto_path),gastos(id,total,estado,foto_path)")
+    .select("id,titulo,estado,creada,enviada,total_aprobado,empleado_id,es_prueba,perfiles(nombre,foto_path),gastos(id,total,estado,foto_path)")
     .order("creada", { ascending: false }));
 }
 
@@ -297,16 +297,33 @@ function filaRend(r, mostrarQuien = true) {
   const n = r.gastos?.length || 0, tot = (r.gastos || []).reduce((s, g) => s + Number(g.total || 0), 0);
   const fotos = (r.gastos || []).filter((g) => g.foto_path);
   const texto = `${r.titulo} ${r.perfiles?.nombre || ""} ${EST_R[r.estado]?.[0] || ""}`.toLowerCase();
-  return `<a class="fila-r" href="#/r/${r.id}" data-texto="${esc(texto)}">
+  const fila = `<a class="fila-r" href="#/r/${r.id}" data-texto="${esc(texto)}">
     <span class="mini">${fotos.length ? `<img data-foto="${esc(fotos[0].foto_path)}" alt="">${fotos.length > 1 ? `<span class="mas">+${fotos.length - 1}</span>` : ""}` : icono("receipt")}</span>
     <span><b>${esc(r.titulo)}</b><span class="meta">${mostrarQuien && r.empleado_id !== S.uid ? esc(r.perfiles?.nombre) + " · " : ""}${n} ticket${n === 1 ? "" : "s"} · ${plata(tot)}${r.total_aprobado != null ? " · a reembolsar " + plata(r.total_aprobado) : ""} · ${fecha(r.enviada || r.creada)}</span></span>
     <span class="lado">${pill(EST_R, r.estado)}${icono("chevron")}</span>
   </a>`;
+  if (!borrable(r)) return `<div class="fila-wrap">${fila}</div>`;
+  // Borrador propio: se puede eliminar deslizando (celular), con el tachito (compu) o seleccionando varios
+  return `<div class="fila-wrap borrable" data-rend="${r.id}" data-texto="${esc(texto)}">
+    <label class="sel" title="Seleccionar"><input type="checkbox" data-sel="${r.id}" aria-label="Seleccionar ${esc(r.titulo)}"></label>
+    <button type="button" class="borrar-atras" data-a="borrar-rend" data-id="${r.id}" data-titulo="${esc(r.titulo)}" tabindex="-1">${icono("trash")}<span>Eliminar</span></button>
+    <button type="button" class="borrar-hover" data-a="borrar-rend" data-id="${r.id}" data-titulo="${esc(r.titulo)}" aria-label="Eliminar ${esc(r.titulo)}" title="Eliminar borrador">${icono("trash")}</button>
+    ${fila}</div>`;
 }
-function listaRends(rs, vacio, { mostrarQuien = true, buscar = true, accion = "" } = {}) {
+const borrable = (r) => r.empleado_id === S.uid && r.estado === "borrador" && !r.es_prueba;
+function listaRends(rs, vacio, { mostrarQuien = true, buscar = true, accion = "", seleccionable = false } = {}) {
   if (!rs.length) return `<div class="vacio">${icono("receipt")}<p>${esc(vacio)}</p>${accion}</div>`;
+  const nBorr = rs.filter(borrable).length;
+  const barra = seleccionable && nBorr ? `<div class="barra-sel">
+      <button type="button" class="btn sel-off" data-a="modo-sel">${icono("check")} Seleccionar borradores</button>
+      <label class="sel-on"><input type="checkbox" data-sel-todo> Seleccionar todo <span class="muted">(${nBorr})</span></label>
+      <span class="sel-on muted small" data-sel-cuenta>0 seleccionados</span>
+      <span class="sel-on fila"><button type="button" class="btn-mal" data-a="borrar-sel" disabled>${icono("trash")} Eliminar</button>
+        <button type="button" class="btn" data-a="cancelar-sel">Cancelar</button></span>
+    </div>` : "";
   return `${buscar && rs.length > 3 ? `<div class="buscar">${icono("search")}<input type="search" data-filtro placeholder="Buscar por nombre, persona o estado" aria-label="Buscar rendiciones"></div>` : ""}
-    <div class="filas">${rs.map((r) => filaRend(r, mostrarQuien)).join("")}</div>`;
+    ${barra}<div class="filas">${rs.map((r) => filaRend(r, mostrarQuien)).join("")}</div>
+    ${nBorr ? `<p class="xs muted pista-desliza">Deslizá un borrador hacia la izquierda para eliminarlo.</p>` : ""}`;
 }
 function chipsGrupo(base, lista, actual) {
   return `<div class="chips" role="tablist" aria-label="Filtrar por estado">${Object.keys(GRUPOS).map((k) => {
@@ -320,7 +337,7 @@ async function vistaRendiciones(g = "todas") {
   const grupo = GRUPOS[g] !== undefined ? g : "todas";
   return `<div class="lista">${chipsGrupo("rendiciones", mias, grupo)}
     ${listaRends(mias.filter((r) => enGrupo(r, grupo)), grupo === "todas" ? "Todavía no tenés rendiciones." : `No tenés rendiciones ${GRUPO_TXT[grupo].toLowerCase()}.`,
-      { mostrarQuien: false, accion: `<a class="btn-p" href="#/nueva">${icono("plus")} Nueva rendición</a>` })}</div>`;
+      { mostrarQuien: false, seleccionable: true, accion: `<a class="btn-p" href="#/nueva">${icono("plus")} Nueva rendición</a>` })}</div>`;
 }
 async function vistaEquipo(g = "todas") {
   const otras = S.rends.filter((r) => r.empleado_id !== S.uid);
@@ -566,7 +583,8 @@ async function vistaDetalle(id) {
         <button class="btn-link" data-a="manual">o cargar un ticket a mano</button></div>
       <div id="revs" class="lista"></div>
       <div class="fila entre"><span class="small ${nBloq || nFalta ? "error" : "muted"}">${motivoEnvio}</span>
-        <button class="btn-p" data-a="enviar" ${!gastos.length || nBloq || nFalta ? "disabled" : ""}>Enviar a mi jefe</button></div>
+        <span class="fila">${borrable(r) ? `<button class="btn-link peligro" data-a="borrar-rend" data-id="${r.id}" data-titulo="${esc(r.titulo)}" data-volver="1">${icono("trash")} Eliminar borrador</button>` : ""}
+        <button class="btn-p" data-a="enviar" ${!gastos.length || nBloq || nFalta ? "disabled" : ""}>Enviar a mi jefe</button></span></div>
     </section>` : ""}
 
     ${gastos.map((g, i) => tarjetaGasto(g, alertas[i], lecturas[i], { editable, jefeDecide, revisor })).join("")
@@ -785,7 +803,41 @@ async function guardarRev(form) {
 // ---------------------------------------------------------------- acciones
 async function hacer(fn, ok) { try { await fn(); if (ok) toast(ok); await render(); } catch (e) { toast(msg(e), true); } }
 
+// ---------------------------------------------------------------- eliminar borradores
+async function borrarRends(ids, { volver = false } = {}) {
+  const res = await rpc("borrar_rendiciones", { p_ids: ids.map(Number) });
+  if (res?.fotos?.length) await sb.storage.from("tickets").remove(res.fotos).catch(() => {});   // si falla, solo quedan fotos sueltas
+  await cargarRends();
+  toast(res.borradas === 1 ? "Borrador eliminado" : `${res.borradas} borradores eliminados` + (res.omitidas ? ` (${res.omitidas} no se podían borrar)` : ""));
+  if (volver) location.hash = "#/rendiciones/borrador"; else await render();
+}
+function contarSel() {
+  const lista = $("#contenido .lista"); if (!lista) return;
+  const marcadas = [...lista.querySelectorAll("[data-sel]:checked")];
+  const todas = lista.querySelectorAll(".fila-wrap.borrable:not([hidden]) [data-sel]");
+  const c = lista.querySelector("[data-sel-cuenta]"); if (c) c.textContent = `${marcadas.length} seleccionado${marcadas.length === 1 ? "" : "s"}`;
+  const b = lista.querySelector('[data-a="borrar-sel"]'); if (b) { b.disabled = !marcadas.length; b.lastChild.textContent = marcadas.length ? ` Eliminar (${marcadas.length})` : " Eliminar"; }
+  const t = lista.querySelector("[data-sel-todo]"); if (t) { t.checked = marcadas.length > 0 && marcadas.length === todas.length; t.indeterminate = marcadas.length > 0 && marcadas.length < todas.length; }
+}
+function cerrarDeslizadas(excepto) {
+  document.querySelectorAll(".fila-wrap.abierta").forEach((w) => { if (w !== excepto) { w.classList.remove("abierta"); w.querySelector(".fila-r").style.transform = ""; } });
+}
+
 const acciones = {
+  "borrar-rend": async (b) => {
+    const ok = await confirmar(`¿Eliminar el borrador «${b.dataset.titulo}»? Se borran sus tickets y fotos. No se puede deshacer.`, { ok: "Eliminar", peligro: true });
+    if (!ok) { cerrarDeslizadas(); return; }
+    try { await borrarRends([b.dataset.id], { volver: !!b.dataset.volver }); } catch (e) { toast(msg(e), true); }
+  },
+  "modo-sel": () => { $("#contenido .lista").classList.add("seleccionando"); cerrarDeslizadas(); contarSel(); },
+  "cancelar-sel": () => { const l = $("#contenido .lista"); l.classList.remove("seleccionando"); l.querySelectorAll("[data-sel]").forEach((c) => { c.checked = false; }); contarSel(); },
+  "borrar-sel": async () => {
+    const ids = [...$("#contenido .lista").querySelectorAll("[data-sel]:checked")].map((c) => c.dataset.sel);
+    if (!ids.length) return;
+    const ok = await confirmar(`¿Eliminar ${ids.length === 1 ? "1 borrador" : ids.length + " borradores"}? Se borran sus tickets y fotos. No se puede deshacer.`, { ok: "Eliminar", peligro: true });
+    if (!ok) return;
+    try { await borrarRends(ids); } catch (e) { toast(msg(e), true); }
+  },
   salir: async () => { await sb.auth.signOut(); location.replace("index.html"); },
   recargar: () => render(),
   tema: () => { alternarTema(); pintarTema(); },
@@ -835,6 +887,13 @@ const acciones = {
 };
 
 app.addEventListener("click", (e) => {
+  const fila = e.target.closest(".fila-r");
+  if (fila) {
+    const w = fila.parentElement;
+    if (w.closest(".seleccionando") && w.classList.contains("borrable")) { e.preventDefault(); const c = w.querySelector("[data-sel]"); c.checked = !c.checked; contarSel(); return; }
+    if (w.classList.contains("abierta") || deslizo) { e.preventDefault(); deslizo = false; cerrarDeslizadas(); return; }
+  }
+  if (!e.target.closest(".fila-wrap")) cerrarDeslizadas();
   const ver = e.target.closest("[data-ver]");
   if (ver) { e.preventDefault(); return abrirVisor(ver.dataset.ver, ver.closest("article")?.querySelector("h3")?.textContent); }
   const local = e.target.closest("[data-ver-local]");
@@ -845,10 +904,46 @@ app.addEventListener("click", (e) => {
   if (b.tagName !== "A") e.preventDefault();
   acciones[b.dataset.a]?.(b, e);
 });
+// Deslizar un borrador hacia la izquierda (celular) muestra el tachito
+let toque = null, deslizo = false;
+const ANCHO_TACHO = 92;
+app.addEventListener("touchstart", (e) => {
+  const w = e.target.closest(".fila-wrap.borrable");
+  if (!w || w.closest(".seleccionando") || e.target.closest("button")) { toque = null; return; }
+  const t = e.touches[0];
+  toque = { w, x: t.clientX, y: t.clientY, base: w.classList.contains("abierta") ? -ANCHO_TACHO : 0, dx: 0, eje: null };
+  w.classList.add("arrastrando");
+}, { passive: true });
+app.addEventListener("touchmove", (e) => {
+  if (!toque) return;
+  const t = e.touches[0], dx = t.clientX - toque.x, dy = t.clientY - toque.y;
+  if (!toque.eje && Math.abs(dx) + Math.abs(dy) > 8) toque.eje = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+  if (toque.eje !== "x") return;
+  e.preventDefault();   // mientras se desliza de costado, la página no hace scroll
+  toque.dx = dx;
+  const pos = Math.max(-ANCHO_TACHO * 1.3, Math.min(0, toque.base + dx));
+  toque.w.querySelector(".fila-r").style.transform = `translateX(${pos}px)`;
+}, { passive: false });
+app.addEventListener("touchend", () => {
+  if (!toque) return;
+  const { w, base, dx, eje } = toque; toque = null;
+  w.classList.remove("arrastrando");
+  if (eje !== "x") return;
+  deslizo = true; setTimeout(() => { deslizo = false; }, 350);   // que el toque no abra la rendición
+  const abrir = base + dx < -ANCHO_TACHO / 2;
+  cerrarDeslizadas(abrir ? w : null);
+  w.classList.toggle("abierta", abrir);
+  w.querySelector(".fila-r").style.transform = abrir ? `translateX(${-ANCHO_TACHO}px)` : "";
+});
 app.addEventListener("change", (e) => {
   if (e.target.id === "archivos" && e.target.files.length) { subirArchivos([...e.target.files]); e.target.value = ""; }
   if (e.target.id === "foto-perfil" && e.target.files[0]) {
     subirAvatar(e.target.files[0]).then(() => { toast("Foto actualizada"); render(); }).catch((err) => toast(msg(err), true));
+  }
+  if (e.target.matches("[data-sel]")) contarSel();
+  if (e.target.matches("[data-sel-todo]")) {
+    $("#contenido .lista").querySelectorAll(".fila-wrap.borrable:not([hidden]) [data-sel]").forEach((c) => { c.checked = e.target.checked; });
+    contarSel();
   }
   if (e.target.matches('[name="tipo_comprobante"]')) {
     const form = e.target.closest("form"); form.dataset.tipo = e.target.value;
@@ -866,7 +961,8 @@ app.addEventListener("change", (e) => {
 app.addEventListener("input", (e) => {
   if (e.target.matches("[data-filtro]")) {
     const t = e.target.value.toLowerCase().trim();
-    e.target.closest(".lista, main").querySelectorAll(".fila-r").forEach((f) => (f.hidden = t && !f.dataset.texto.includes(t)));
+    e.target.closest(".lista, main").querySelectorAll(".fila-wrap").forEach((w) => (w.hidden = t && !w.querySelector(".fila-r").dataset.texto.includes(t)));
+    contarSel();
   }
   const box = e.target.closest("[data-rev]"); if (box) actualizarSuma(box);
 });
