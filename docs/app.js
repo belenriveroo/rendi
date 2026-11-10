@@ -801,8 +801,8 @@ async function vistaDetalle(id) {
       <label>Motivo (obligatorio si rechazás)<input id="motivo-fin"></label>
       <div class="fila"><button class="btn-p" data-a="fin" data-ok="1">Aprobar</button><button class="btn-mal" data-a="fin" data-ok="0">Rechazar</button></div></section>` : ""}
     ${finPaga ? `<form class="card" data-form="pago" data-esperado='${esc(JSON.stringify(esperadoPago))}' data-quien="${esc(r.perfiles?.nombre || "")}"><h2>Registrar el reembolso · ${aReemb}</h2>
-      <p class="small muted">Primero hacé la transferencia en el banco. Después subí la foto o captura del comprobante: la IA completa fecha, medio y número, y chequea el monto. La persona ve estos datos y confirma que la recibió.</p>
-      <label class="subir-pago">${icono("camera")} Foto o captura del comprobante (opcional)<input name="archivo" type="file" accept="image/*"></label>
+      <p class="small muted">Primero hacé la transferencia en el banco. Después subí el comprobante (el PDF que descargás del banco, una captura o una foto): la IA completa fecha, medio y número, y chequea el monto. La persona ve estos datos y confirma que la recibió.</p>
+      <label class="subir-pago">${icono("camera")} Comprobante: PDF del banco, captura o foto (opcional)<input name="archivo" type="file" accept="application/pdf,image/*"></label>
       <div class="lectura-pago" aria-live="polite"></div>
       <div class="campos"><label>Fecha del pago<input name="fecha" type="date" value="${new Date().toISOString().slice(0, 10)}" max="${new Date().toISOString().slice(0, 10)}" required></label>
         <label>Medio<input name="medio" list="medios-reembolso" placeholder="Transferencia BROU" required></label>
@@ -930,15 +930,23 @@ async function leerFoto(rev, file) {
   }
   await leerConIA(rev);
 }
+// El comprobante del pago puede ser un PDF (tal cual lo baja el banco) o una imagen (se achica antes de subirla)
+async function prepararComprobantePago(file) {
+  const esPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name || "");
+  if (esPdf) {
+    if (file.size > 8 * 1024 * 1024) throw new Error("el PDF pesa más de 8 MB");
+    return { blob: file, tipo: "application/pdf", path: `${S.uid}/pago-${S.rendId}-${Date.now()}.pdf` };
+  }
+  return { blob: await achicar(file), tipo: "image/jpeg", path: `${S.uid}/pago-${S.rendId}-${Date.now()}.jpg` };
+}
 // Finanzas sube el comprobante de la transferencia: se guarda y la IA completa el formulario de pago
 async function leerTransferencia(f, file) {
   const caja = f.querySelector(".lectura-pago");
   caja.innerHTML = `<p class="alerta info"><span class="nivel">IA</span><span>Leyendo el comprobante…</span></p>`;
   delete f.dataset.path;
   try {
-    const blob = await achicar(file);
-    const path = `${S.uid}/pago-${S.rendId}-${Date.now()}.jpg`;
-    const up = await sb.storage.from("tickets").upload(path, blob, { contentType: "image/jpeg", upsert: false });
+    const { blob, path, tipo } = await prepararComprobantePago(file);
+    const up = await sb.storage.from("tickets").upload(path, blob, { contentType: tipo, upsert: false });
     if (up.error) throw up.error;
     f.dataset.path = path;
     const { datos: d } = await invocarLector(path, "transferencia");
@@ -1171,6 +1179,11 @@ app.addEventListener("click", (e) => {
   }
   if (!e.target.closest(".fila-wrap")) cerrarDeslizadas();
   const ver = e.target.closest("[data-ver]");
+  if (ver && /\.pdf$/i.test(ver.dataset.ver)) {   // los PDF se abren en otra pestaña con un link firmado
+    e.preventDefault(); const w = open("", "_blank");
+    firmar("tickets", [ver.dataset.ver], S.fotos).then(() => { if (w) w.location = S.fotos[ver.dataset.ver]; else location.href = S.fotos[ver.dataset.ver]; });
+    return;
+  }
   if (ver) { e.preventDefault(); return abrirVisor(ver.dataset.ver, ver.closest("article")?.querySelector("h3")?.textContent); }
   const local = e.target.closest("[data-ver-local]");
   if (local) { e.preventDefault(); const d = $("#visor"); d.querySelector("img").src = local.dataset.verLocal; d.querySelector(".titulo").textContent = "Ticket subido"; d.querySelector("[data-original]").href = local.dataset.verLocal; Object.assign(visor, { zoom: 1, giro: 0 }); aplicarVisor(); return d.showModal(); }
@@ -1265,9 +1278,8 @@ app.addEventListener("submit", async (e) => {
       let path = f.dataset.path || null;
       const file = f.archivo.files[0];
       if (file && !path) {
-        const blob = await achicar(file);
-        path = `${S.uid}/pago-${S.rendId}-${Date.now()}.jpg`;
-        const up = await sb.storage.from("tickets").upload(path, blob, { contentType: "image/jpeg", upsert: false });
+        const c = await prepararComprobantePago(file); path = c.path;
+        const up = await sb.storage.from("tickets").upload(path, c.blob, { contentType: c.tipo, upsert: false });
         if (up.error) throw up.error;
       }
       await rpc("marcar_reembolsada", { p_rend: S.rendId, p_fecha: f.fecha.value, p_medio: f.medio.value, p_referencia: f.referencia.value, p_comprobante: path });
