@@ -3,6 +3,7 @@
 // Todas las reglas las controla la base; acá solo se muestran y se piden.
 // =====================================================================
 import { sb, CFG, configurado, esc, icono, alternarTema } from "./sb.js";
+import { activarIdioma, idiomaDe, idiomaActivo, t } from "./i18n.js";
 
 // El link de "olvidé mi contraseña" llega con #...type=recovery: lo leemos antes de que Supabase limpie la dirección
 const llegoPorRecuperacion = location.hash.includes("type=recovery");
@@ -138,6 +139,7 @@ async function arrancar() {
   if (!user) { location.replace("index.html#entrar"); return; }
   S.uid = user.id; S.email = user.email;
   await cargarPerfil();
+  activarIdioma(idiomaDe(S.perfil));
   if (!S.perfil) {
     app.innerHTML = `<div class="l-wrap" style="padding:60px 20px"><div class="card"><h1>Tu usuario no tiene perfil</h1>
       <p>Corré <b class="mono">04_demo_y_calidad.sql</b> en Supabase para crear los perfiles.</p>
@@ -510,6 +512,7 @@ async function vistaPerfil() {
       <label>Rol<input value="${esc(rol)} · ${esc(p.area || "")}" disabled></label>
       <label>País y moneda<input value="${esc(PAISES[p.pais]?.nombre || p.pais || "Uruguay")} · ${esc(p.moneda || "UYU")}" disabled></label>
       <p class="xs muted">El rol, el jefe y el país los asigna el administrador.</p>
+      <label>Idioma<select id="idioma" data-sin-traducir><option value="es" ${idiomaActivo() === "es" ? "selected" : ""}>Español</option><option value="pt" ${idiomaActivo() === "pt" ? "selected" : ""}>Português</option></select></label>
       <div><button class="btn-p">Guardar cambios</button></div>
     </form>
     <div class="lista">
@@ -581,12 +584,17 @@ async function filasParaDescargar(ids) {
 async function exportar(formato) {
   const x = S.exportar; if (!x?.ids?.length) return toast("No hay nada para descargar.", true);
   toast("Preparando la descarga…");
-  const filas = await filasParaDescargar(x.ids);
-  if (!filas.length) return toast("Esas rendiciones no tienen tickets.", true);
+  const filasEs = await filasParaDescargar(x.ids);
+  if (!filasEs.length) return toast("Esas rendiciones no tienen tickets.", true);
+  // Columnas y estados en el idioma de quien descarga (los datos cargados quedan como están)
+  const TRADUCIBLES = ["Estado rendición", "Comprobante", "Categoría", "Estado ticket"];
+  const filas = filasEs.map((f) => Object.fromEntries(Object.entries(f).map(([k, v]) => [t(k), TRADUCIBLES.includes(k) ? t(v) : v])));
+  const K = { mon: t("Moneda"), eq: t("Equivale en $U"), re: t("Se reembolsa"), tot: t("Total") };
+  const local = idiomaActivo() === "pt" ? "pt-BR" : "es-UY";
   const nombre = "rendi-" + x.titulo.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   const cols = Object.keys(filas[0]);
   const bajar = (blob, ext) => { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `${nombre}.${ext}`; a.click(); };
-  const totalU = filas.reduce((s, f) => s + f["Equivale en $U"], 0);
+  const totalU = filas.reduce((s, f) => s + f[K.eq], 0);
   if (formato === "csv") {
     const csv = [cols].concat(filas.map((f) => cols.map((c) => f[c]))).map((l) => l.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(";")).join("\n");
     return bajar(new Blob(["﻿" + csv], { type: "text/csv" }), "csv");
@@ -594,9 +602,9 @@ async function exportar(formato) {
   if (formato === "xlsx") {
     const m = await import(LIB.xlsx), X = m.utils ? m : m.default;
     const hoja = X.utils.json_to_sheet(filas);
-    X.utils.sheet_add_aoa(hoja, [[], ["", "", "", "", "", "", "", "", "", "", "Total en $U", totalU]], { origin: -1 });
+    X.utils.sheet_add_aoa(hoja, [[], ["", "", "", "", "", "", "", "", "", "", t("Total en $U"), totalU]], { origin: -1 });
     hoja["!cols"] = cols.map((c) => ({ wch: Math.max(10, c.length + 2, ...filas.map((f) => String(f[c]).length + 1).slice(0, 200)) }));
-    const libro = X.utils.book_new(); X.utils.book_append_sheet(libro, hoja, "Gastos");
+    const libro = X.utils.book_new(); X.utils.book_append_sheet(libro, hoja, t("Gastos"));
     return X.writeFile(libro, `${nombre}.xlsx`);
   }
   let jsPDF, autoTable;
@@ -608,19 +616,19 @@ async function exportar(formato) {
     const w = open("", "_blank");
     if (!w) return toast("Permití las ventanas emergentes para descargar el PDF.", true);
     w.document.write(`<!doctype html><meta charset="utf-8"><title>${esc(x.titulo)}</title><style>body{font:12px Arial;margin:24px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:4px;text-align:left}th{background:#e2f2ec}</style>
-      <h2>Rendí · ${esc(x.titulo)}</h2><p>Descargado por ${esc(S.perfil.nombre)} el ${new Date().toLocaleString("es-UY")}</p>
+      <h2>Rendí · ${esc(t(x.titulo))}</h2><p>${t("Descargado por")} ${esc(S.perfil.nombre)} · ${new Date().toLocaleString(local)}</p>
       <table><tr>${cols.map((c) => `<th>${esc(c)}</th>`).join("")}</tr>${filas.map((f) => `<tr>${cols.map((c) => `<td>${esc(f[c])}</td>`).join("")}</tr>`).join("")}</table>
-      <p><b>Total en $U: ${plata(totalU)}</b></p>`);
+      <p><b>${t("Total en $U")}: ${plata(totalU)}</b></p>`);
     w.document.close(); w.focus(); w.print(); return;
   }
   const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
-  doc.setFontSize(15); doc.text(`Rendí · ${x.titulo}`, 36, 40);
-  doc.setFontSize(9); doc.setTextColor(110); doc.text(`Descargado por ${S.perfil.nombre} el ${new Date().toLocaleString("es-UY")} · ${filas.length} tickets`, 36, 56);
-  const porMoneda = Object.entries(filas.reduce((a, f) => ((a[f.Moneda] = (a[f.Moneda] || 0) + f["Se reembolsa"]), a), {}))
+  doc.setFontSize(15); doc.text(`Rendí · ${t(x.titulo)}`, 36, 40);
+  doc.setFontSize(9); doc.setTextColor(110); doc.text(`${t("Descargado por")} ${S.perfil.nombre} · ${new Date().toLocaleString(local)} · ${t(`${filas.length} tickets`)}`, 36, 56);
+  const porMoneda = Object.entries(filas.reduce((a, f) => ((a[f[K.mon]] = (a[f[K.mon]] || 0) + f[K.re]), a), {}))
     .map(([m, v]) => dinero(v, m)).join(" · ");
-  const pdfCols = ["Fecha", "Persona", "Rendición", "Comercio", "Comprobante", "Categoría", "Total", "Se reembolsa", "Equivale en $U", "Estado ticket"];
+  const pdfCols = ["Fecha", "Persona", "Rendición", "Comercio", "Comprobante", "Categoría", "Total", "Se reembolsa", "Equivale en $U", "Estado ticket"].map(t);
   autoTable(doc, { startY: 70, head: [pdfCols], styles: { fontSize: 7.5, cellPadding: 3 }, headStyles: { fillColor: [11, 122, 94] },
-    body: filas.map((f) => pdfCols.map((c) => ["Total", "Se reembolsa"].includes(c) ? dinero(f[c], f.Moneda) : c === "Equivale en $U" ? plata(f[c]) : String(f[c]))),
+    body: filas.map((f) => pdfCols.map((c) => [K.tot, K.re].includes(c) ? dinero(f[c], f[K.mon]) : c === K.eq ? plata(f[c]) : String(f[c]))),
     foot: [["", "", "", "", "", "", "", porMoneda, plata(totalU), ""]], footStyles: { fillColor: [226, 242, 236], textColor: 20 } });
   doc.save(`${nombre}.pdf`);
 }
@@ -738,6 +746,8 @@ async function vistaDetalle(id) {
   const abiertos = (i) => ["pendiente", "a_corregir"].includes(gastos[i].estado);
   const vivos = gastos.filter((g) => g.estado !== "rechazado");
   const unaMoneda = new Set(gastos.map((g) => g.moneda || "UYU")).size <= 1, mon = gastos[0]?.moneda || "UYU";
+  const montoOriginal = vivos.filter((g) => ["aprobado", "aprobado_parcial"].includes(g.estado)).reduce((s, g) => s + reembolsable(g.gasto_items), 0);
+  const esperadoPago = { UYU: Number(r.total_aprobado || 0), ...(unaMoneda && mon !== "UYU" ? { [mon]: montoOriginal } : {}) };
   const aReemb = r.total_aprobado != null
     ? (unaMoneda && mon !== "UYU" ? dinero(vivos.filter((g) => ["aprobado", "aprobado_parcial"].includes(g.estado)).reduce((s, g) => s + reembolsable(g.gasto_items), 0), mon) + ` <span class="xs muted">≈ ${plata(r.total_aprobado)}</span>` : plata(r.total_aprobado))
     : totalTickets(vivos, (g) => reembolsable(g.gasto_items));
@@ -790,12 +800,13 @@ async function vistaDetalle(id) {
       <p class="small muted">${sinJefe ? `${esc(r.perfiles?.nombre)} no tiene jefe asignado: sus gastos los aprobás vos, todos juntos.` : `El jefe aprobó ${plata(r.total_aprobado)}. Como supera ${plata(3000)}, necesita tu aprobación.`}</p>
       <label>Motivo (obligatorio si rechazás)<input id="motivo-fin"></label>
       <div class="fila"><button class="btn-p" data-a="fin" data-ok="1">Aprobar</button><button class="btn-mal" data-a="fin" data-ok="0">Rechazar</button></div></section>` : ""}
-    ${finPaga ? `<form class="card" data-form="pago"><h2>Registrar el reembolso · ${aReemb}</h2>
-      <p class="small muted">Primero hacé la transferencia en el banco. Después anotá acá sus datos: la persona los ve y confirma que la recibió.</p>
+    ${finPaga ? `<form class="card" data-form="pago" data-esperado='${esc(JSON.stringify(esperadoPago))}' data-quien="${esc(r.perfiles?.nombre || "")}"><h2>Registrar el reembolso · ${aReemb}</h2>
+      <p class="small muted">Primero hacé la transferencia en el banco. Después subí la foto o captura del comprobante: la IA completa fecha, medio y número, y chequea el monto. La persona ve estos datos y confirma que la recibió.</p>
+      <label class="subir-pago">${icono("camera")} Foto o captura del comprobante (opcional)<input name="archivo" type="file" accept="image/*"></label>
+      <div class="lectura-pago" aria-live="polite"></div>
       <div class="campos"><label>Fecha del pago<input name="fecha" type="date" value="${new Date().toISOString().slice(0, 10)}" max="${new Date().toISOString().slice(0, 10)}" required></label>
         <label>Medio<input name="medio" list="medios-reembolso" placeholder="Transferencia BROU" required></label>
-        <label>N.º de comprobante de la transferencia<input name="referencia" required placeholder="Ej.: TRF-0045821"></label>
-        <label>Comprobante (foto, opcional)<input name="archivo" type="file" accept="image/*"></label></div>
+        <label>N.º de comprobante de la transferencia<input name="referencia" required placeholder="Ej.: TRF-0045821"></label></div>
       <datalist id="medios-reembolso">${["Transferencia BROU", "Transferencia Itaú", "Transferencia Santander", "Transferencia Scotiabank", "Transferencia BBVA", "Pix", "Transferencia bancaria (Argentina)", "Transferencia bancaria (Chile)", "Efectivo"].map((m) => `<option value="${m}">`).join("")}</datalist>
       <div><button class="btn-p">Marcar como reembolsada</button></div></form>` : ""}
     ${r.estado === "reembolsada" ? `<section class="card pago"><h2>Reembolso pagado</h2>
@@ -880,11 +891,11 @@ async function achicar(file, lado = 1600) {
 }
 // Llama a la función de IA. Si se corta la conexión (señal del celular, la función tardó demasiado), reintenta una vez sola.
 const SIN_CONEXION = "Se cortó la conexión con el lector de tickets (puede ser la señal del celular o que la IA tardó demasiado)";
-async function invocarLector(path) {
+async function invocarLector(path, modo) {
   for (let intento = 1; intento <= 2; intento++) {
     const espera = new Promise((_, no) => setTimeout(() => no(new Error("tiempo")), 75_000));
     let r;
-    try { r = await Promise.race([sb.functions.invoke("leer-ticket", { body: { path } }), espera]); }
+    try { r = await Promise.race([sb.functions.invoke("leer-ticket", { body: modo ? { path, modo } : { path } }), espera]); }
     catch { r = { error: { name: "FunctionsFetchError", message: "tiempo" } }; }
     const { data, error } = r;
     if (!error) { if (data?.error) throw new Error(data.error); return data; }
@@ -918,6 +929,44 @@ async function leerFoto(rev, file) {
     rev.datos = rev.datos || vacio(); rev.estado = "form"; pintarRev(rev); return;
   }
   await leerConIA(rev);
+}
+// Finanzas sube el comprobante de la transferencia: se guarda y la IA completa el formulario de pago
+async function leerTransferencia(f, file) {
+  const caja = f.querySelector(".lectura-pago");
+  caja.innerHTML = `<p class="alerta info"><span class="nivel">IA</span><span>Leyendo el comprobante…</span></p>`;
+  delete f.dataset.path;
+  try {
+    const blob = await achicar(file);
+    const path = `${S.uid}/pago-${S.rendId}-${Date.now()}.jpg`;
+    const up = await sb.storage.from("tickets").upload(path, blob, { contentType: "image/jpeg", upsert: false });
+    if (up.error) throw up.error;
+    f.dataset.path = path;
+    const { datos: d } = await invocarLector(path, "transferencia");
+    if (d.fecha && d.fecha <= f.fecha.max) f.fecha.value = d.fecha;
+    if (d.medio) f.medio.value = d.medio;
+    if (d.referencia) f.referencia.value = d.referencia;
+    const esp = JSON.parse(f.dataset.esperado || "{}");
+    const avisos = [];
+    if (d.monto != null) {
+      const mon = d.moneda || (Object.keys(esp).length === 1 ? "UYU" : Object.keys(esp).find((k) => k !== "UYU"));
+      if (esp[mon] == null) avisos.push(["warn", "Moneda", `El comprobante es por ${dinero(d.monto, mon)} y la rendición no está en esa moneda. Revisá el monto.`]);
+      else if (Math.abs(d.monto - esp[mon]) > Math.max(1, esp[mon] * 0.01)) avisos.push(["need", "Monto", `El comprobante dice ${dinero(d.monto, mon)} y lo aprobado es ${dinero(esp[mon], mon)}. Revisá antes de marcarla.`]);
+      else avisos.push(["ok", "Monto", `${dinero(d.monto, mon)}: coincide con lo aprobado.`]);
+    } else avisos.push(["warn", "Monto", "No se pudo leer el monto: revisalo en el comprobante."]);
+    if (d.destinatario) {
+      const norm = (t) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+      const quien = norm(f.dataset.quien || ""), dest = norm(d.destinatario);
+      const coincide = quien.split(/\s+/).filter((p) => p.length > 2).some((p) => dest.includes(p));
+      avisos.push(coincide ? ["ok", "Destinatario", `${d.destinatario}.`] : ["need", "Destinatario", `Figura ${d.destinatario}, no ${f.dataset.quien}. ¿Es la cuenta correcta?`]);
+    }
+    if (!d.referencia) avisos.push(["warn", "N.º", "No se encontró el número de comprobante: completalo a mano."]);
+    caja.innerHTML = `<p class="small muted">${icono("sparkle")} Datos leídos por la IA: revisalos antes de marcar como reembolsada.</p>` +
+      avisos.map(([n, k, t]) => `<p class="alerta ${n}"><span class="nivel">${esc(k)}</span><span>${esc(t)}</span></p>`).join("");
+  } catch (e) {
+    caja.innerHTML = f.dataset.path
+      ? `<p class="alerta warn"><span class="nivel">IA</span><span>La foto quedó guardada pero no se pudo leer (${esc(msg(e))}). Completá los datos a mano.</span></p>`
+      : `<p class="alerta bad"><span class="nivel">Foto</span><span>No se pudo subir la foto (${esc(msg(e))}).</span></p>`;
+  }
 }
 function subirArchivos(files) {
   for (const file of files) {
@@ -1164,8 +1213,13 @@ app.addEventListener("touchend", () => {
 });
 app.addEventListener("change", (e) => {
   if (e.target.id === "archivos" && e.target.files.length) { subirArchivos([...e.target.files]); e.target.value = ""; }
+  if (e.target.matches('[data-form="pago"] [name="archivo"]') && e.target.files[0]) leerTransferencia(e.target.closest("form"), e.target.files[0]);
   if (e.target.id === "foto-perfil" && e.target.files[0]) {
     subirAvatar(e.target.files[0]).then(() => { toast("Foto actualizada"); render(); }).catch((err) => toast(msg(err), true));
+  }
+  if (e.target.id === "idioma") {
+    try { localStorage.setItem("rendi-idioma", e.target.value); } catch { /* sin almacenamiento */ }
+    location.reload();   // se vuelve a dibujar todo en el idioma elegido
   }
   if (e.target.matches("[data-sel]")) contarSel();
   if (e.target.matches("[data-sel-todo]")) {
@@ -1208,9 +1262,9 @@ app.addEventListener("submit", async (e) => {
   if (tipo === "pago") {
     if (!(await confirmar(`¿Ya hiciste la transferencia? La rendición queda como reembolsada con el comprobante ${f.referencia.value}.`, { ok: "Sí, marcar reembolsada" }))) return;
     hacer(async () => {
-      let path = null;
+      let path = f.dataset.path || null;
       const file = f.archivo.files[0];
-      if (file) {
+      if (file && !path) {
         const blob = await achicar(file);
         path = `${S.uid}/pago-${S.rendId}-${Date.now()}.jpg`;
         const up = await sb.storage.from("tickets").upload(path, blob, { contentType: "image/jpeg", upsert: false });

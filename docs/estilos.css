@@ -406,3 +406,9 @@ form[data-tipo="cfe"] .no-cfe, form[data-tipo="pix"] .no-pix, form[data-tipo="pa
 .usuario.pendiente { border-color: var(--warn, #9a5a06); }
 .usuario h3 { margin: 0; }
 .pago .datos { margin-bottom: 8px; }
+
+/* v5.1 · Finanzas sube el comprobante de la transferencia y la IA completa el formulario */
+.subir-pago { display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1.5px dashed var(--stamp); background: var(--stamp-soft); border-radius: var(--r); cursor: pointer; font-weight: 600; }
+.subir-pago input { font-size: 14px; }
+.lectura-pago:empty { display: none; }
+.lectura-pago { display: grid; gap: 6px; }
