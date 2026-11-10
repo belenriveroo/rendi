@@ -59,6 +59,10 @@
         "acceptedAnswer": { "@type": "Answer", "text": "No. La IA las detecta y se descuentan solas del reembolso, pero el resto del ticket sigue su camino." } },
       { "@type": "Question", "name": "¿Quién ve mis gastos?",
         "acceptedAnswer": { "@type": "Answer", "text": "Vos, tu jefe y Finanzas cuando ya lo aprobó tu jefe. Lo controla la base de datos, no la pantalla." } },
+      { "@type": "Question", "name": "¿Funciona fuera de Uruguay?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Sí. Cada persona tiene su país y su moneda: pesos uruguayos, argentinos o chilenos, reales o dólares. En Brasil se pueden cargar comprovantes Pix y en Argentina capturas de Prex. Los topes se comparan pasando todo a pesos uruguayos." } },
+      { "@type": "Question", "name": "¿Cómo se suma alguien nuevo?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Se registra con su correo corporativo y queda pendiente. El administrador lo aprueba y le asigna rol, jefe y país." } },
       { "@type": "Question", "name": "¿Cuánto cuesta?",
         "acceptedAnswer": { "@type": "Answer", "text": "La demo es gratis. Usarlo en una empresa cuesta centavos de dólar por ticket leído por la IA." } }
     ]
@@ -76,6 +80,7 @@
       </nav>
       <div class="l-acciones">
         <button class="btn-icono" type="button" data-tema aria-label="Cambiar entre modo claro y oscuro"></button>
+        <button class="btn solo-compu" type="button" data-abrir-registro>Crear cuenta</button>
         <button class="btn-p" type="button" data-abrir-login>Iniciar sesión</button>
       </div>
     </div>
@@ -121,14 +126,17 @@
         <details><summary>¿Sirve el ticket del POS (Mercado Pago, OCA, Handy)?</summary><p>Sí. La IA reconoce que es un comprobante de pago y no un e-Ticket, guarda el medio de pago y el número de operación, y te pide una línea explicando por qué no hay e-Ticket. El mismo pago no se puede rendir dos veces.</p></details>
         <details><summary>¿Se reembolsan las bebidas alcohólicas?</summary><p>No. La IA las detecta y se descuentan solas del reembolso, pero el resto del ticket sigue su camino.</p></details>
         <details><summary>¿Quién ve mis gastos?</summary><p>Vos, tu jefe y Finanzas cuando ya lo aprobó tu jefe. Lo controla la base de datos, no la pantalla.</p></details>
+        <details><summary>¿Funciona fuera de Uruguay?</summary><p>Sí. Cada persona tiene su país y su moneda: pesos uruguayos, argentinos o chilenos, reales o dólares. En Brasil se pueden cargar comprovantes Pix y en Argentina capturas de Prex. Los topes se comparan pasando todo a pesos uruguayos.</p></details>
+        <details><summary>¿Cómo se suma alguien nuevo?</summary><p>Se registra con su correo corporativo y queda pendiente. El administrador lo aprueba y le asigna rol, jefe y país.</p></details>
         <details><summary>¿Cuánto cuesta?</summary><p>La demo es gratis. Usarlo en una empresa cuesta centavos de dólar por ticket leído por la IA.</p></details>
       </div>
     </section>
 
     <section class="l-cta l-wrap" aria-labelledby="t-cta">
       <h2 id="t-cta">Probalo con las cuentas demo</h2>
-      <p>Entrá como la empleada, el jefe o Finanzas y seguí un gasto de punta a punta.</p>
-      <button class="btn-p btn-grande" type="button" data-abrir-login>Iniciar sesión</button>
+      <p>Entrá como empleada, jefe, Finanzas o administración y seguí un gasto de punta a punta. ¿Tu empresa ya usa Rendí? Creá tu cuenta con tu correo corporativo.</p>
+      <div class="fila" style="justify-content:center"><button class="btn-p btn-grande" type="button" data-abrir-login>Iniciar sesión</button>
+        <button class="btn btn-grande" type="button" data-abrir-registro>Crear cuenta</button></div>
     </section>
   </main>
 
@@ -153,11 +161,29 @@
         <p class="error" role="alert" hidden></p>
         <button class="btn-p btn-grande">Entrar</button>
         <button type="button" class="btn-link" data-ir="olvide">Olvidé mi contraseña</button>
+        <p class="small muted" style="text-align:center">¿No tenés cuenta? <button type="button" class="btn-link" data-ir="registro">Crear cuenta</button></p>
       </form>
       <div class="demo-cuentas">
         <p class="small muted">¿Venís a probar? Elegí una cuenta demo y tocá <b>Entrar</b>:</p>
         <div class="fila" id="cuentas-demo"></div>
       </div>
+    </div>
+    <div data-vista="registro" hidden>
+      <h2>Crear cuenta</h2>
+      <p class="small muted">Usá tu <b>correo corporativo</b>. Tu cuenta queda pendiente hasta que la apruebe el administrador de tu empresa, que te asigna el rol y el jefe.</p>
+      <form id="form-registro" class="lista" novalidate>
+        <label>Nombre y apellido<input name="nombre" autocomplete="name" required></label>
+        <label>Correo corporativo<input name="email" type="email" autocomplete="email" placeholder="nombre@tuempresa.com" required></label>
+        <div class="campos">
+          <label>Área<input name="area" placeholder="Comercial, Ventas…"></label>
+          <label>País<select name="pais"><option value="UY">Uruguay</option><option value="AR">Argentina</option><option value="BR">Brasil</option><option value="CL">Chile</option><option value="US">Estados Unidos</option></select></label>
+        </div>
+        <label>Contraseña (mínimo 8 caracteres)<input name="clave" type="password" autocomplete="new-password" minlength="8" required></label>
+        <p class="error" role="alert" hidden></p>
+        <p class="ok" role="status" hidden></p>
+        <button class="btn-p btn-grande">Enviar solicitud</button>
+        <button type="button" class="btn-link" data-ir="entrar">Ya tengo cuenta</button>
+      </form>
     </div>
     <div data-vista="olvide" hidden>
       <h2>Recuperar la contraseña</h2>

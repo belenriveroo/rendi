@@ -8,12 +8,24 @@ import { sb, CFG, configurado, esc, icono, alternarTema } from "./sb.js";
 const llegoPorRecuperacion = location.hash.includes("type=recovery");
 const app = document.getElementById("app");
 const S = { perfil: null, uid: null, email: "", fotos: {}, avatares: {}, revisiones: [], rends: [],
-  recuperar: llegoPorRecuperacion, abiertos: new Set(["rendiciones", "equipo"]), detalle: null, totales: [] };
+  recuperar: llegoPorRecuperacion, abiertos: new Set(["rendiciones", "equipo"]), detalle: null, totales: [],
+  monedas: {}, equipo: 0, pendientesAlta: 0, exportar: null };
 
 // ---------------------------------------------------------------- utilidades
 const $ = (s, r = document) => r.querySelector(s);
 const plata = (n) => n === null || n === undefined || n === "" ? "—"
   : "$U " + Number(n).toLocaleString("es-UY", { minimumFractionDigits: Number(n) % 1 ? 2 : 0, maximumFractionDigits: 2 });
+// Montos en cualquier moneda: R$ 120 · AR$ 20.000 · CLP$ 25.000 · US$ 50
+const SIMBOLO = { UYU: "$U", USD: "US$", BRL: "R$", ARS: "AR$", CLP: "CLP$" };
+const dinero = (n, mon = "UYU") => n === null || n === undefined || n === "" ? "—" : mon === "UYU" || !mon ? plata(n)
+  : (S.monedas[mon]?.simbolo || SIMBOLO[mon] || mon) + " " + Number(n).toLocaleString("es-UY", { minimumFractionDigits: Number(n) % 1 ? 2 : 0, maximumFractionDigits: 2 });
+const tasa = (mon) => Number(S.monedas[mon]?.tasa_uyu || 1);
+// Total de varios tickets: en su moneda si son todos iguales; si se mezclan, el equivalente en pesos uruguayos
+function totalTickets(gs, campo = (g) => Number(g.total || 0)) {
+  const mons = [...new Set(gs.map((g) => g.moneda || "UYU"))];
+  if (mons.length <= 1) return dinero(gs.reduce((s, g) => s + campo(g), 0), mons[0] || "UYU");
+  return "≈ " + plata(gs.reduce((s, g) => s + campo(g) * Number(g.tasa_uyu || tasa(g.moneda)), 0));
+}
 const fecha = (f) => f ? new Date(String(f).length === 10 ? f + "T12:00:00" : f).toLocaleDateString("es-UY", { day: "numeric", month: "short", year: "numeric" }) : "—";
 const numero = (v) => { const s = String(v ?? "").trim().replace(/\s/g, ""); if (!s) return null; const n = Number(s.includes(",") ? s.replace(/\./g, "").replace(",", ".") : s); return Number.isFinite(n) ? n : null; };
 const msg = (e) => (e?.message || String(e)).replace(/^DUPLICADO: /, "Duplicado: ");
@@ -23,11 +35,22 @@ const mesActual = new Date().toISOString().slice(0, 7);
 const CATEGORIAS = { comidas: "Comidas", traslados: "Traslados", alojamiento: "Alojamiento", otros: "Otros" };
 const CAMPOS = { rut_emisor: "RUT", serie: "Serie", numero: "Número", fecha: "Fecha", comercio: "Comercio", neto: "Neto", iva: "IVA", total: "Total",
   nro_operacion: "N.º de operación", tipo_comprobante: "Tipo de comprobante" };
-const TIPOS = { cfe: "e-Ticket o e-Factura", pago: "Comprobante de pago (POS)" };
-const MEDIOS = ["Mercado Pago", "OCA", "Handy", "Getnet", "VISA", "Mastercard", "BROU", "Itaú", "Santander", "Scotiabank"];
+// Cada país tiene sus comprobantes: el formulario cambia según dónde trabaja la persona
+const PAISES = {
+  UY: { nombre: "Uruguay", moneda: "UYU", id: "RUT emisor", tipos: { cfe: "e-Ticket o e-Factura", pago: "Comprobante de pago (POS o Prex)" } },
+  AR: { nombre: "Argentina", moneda: "ARS", id: "CUIT", tipos: { cfe: "Factura o ticket fiscal", pago: "Comprobante de pago (Prex, Mercado Pago, POS)" } },
+  BR: { nombre: "Brasil", moneda: "BRL", id: "CNPJ", tipos: { cfe: "Nota fiscal", pix: "Comprovante Pix", pago: "Comprobante del POS" } },
+  CL: { nombre: "Chile", moneda: "CLP", id: "RUT emisor", tipos: { cfe: "Boleta o factura", pago: "Comprobante de pago (POS)" } },
+  US: { nombre: "Estados Unidos", moneda: "USD", id: "Tax ID", tipos: { cfe: "Receipt o invoice", pago: "Comprobante de tarjeta" } },
+};
+const paisDeMoneda = (m) => Object.keys(PAISES).find((k) => PAISES[k].moneda === m) || "UY";
+const TIPOS = { cfe: "Comprobante fiscal", pago: "Comprobante de pago", pix: "Comprovante Pix" };
+const MEDIOS = ["Mercado Pago", "OCA", "Handy", "Prex", "Getnet", "Transbank", "VISA", "Mastercard", "BROU", "Itaú", "Santander", "Scotiabank"];
+const ROLES = { empleado: "Empleado/a", jefe: "Jefe", finanzas: "Finanzas", admin: "Administración" };
 const REGLAS = { datos: "Datos incompletos", fecha: "Fecha", suma_lineas: "Suma de líneas", iva: "IVA", duplicado: "Posible duplicado",
   alcohol: "Alcohol", tope_categoria: "Tope por categoría", plazo: "Fuera de plazo", tope_mensual: "Tope mensual",
-  ia_confianza: "Lectura dudosa", corregido: "Corregido a mano", sin_cfe: "Sin e-Ticket" };
+  ia_confianza: "Lectura dudosa", corregido: "Corregido a mano", sin_cfe: "Sin comprobante fiscal", duplicado_pix: "Pix repetido",
+  duplicado_pago: "Pago repetido", motivo_obligatorio: "Motivo obligatorio" };
 
 const EST_R = {
   borrador: ["Borrador", "e-info"], pendiente_jefe: ["Pendiente jefe", "e-pend"], devuelta: ["Devuelta para corregir", "e-mal"],
@@ -121,11 +144,28 @@ async function arrancar() {
       <div><button data-a="salir">Cerrar sesión</button></div></div></div>`;
     return;
   }
+  if (S.perfil.estado_cuenta && S.perfil.estado_cuenta !== "activa") {
+    const pend = S.perfil.estado_cuenta === "pendiente";
+    app.innerHTML = `<div class="l-wrap" style="padding:60px 20px"><div class="card" style="max-width:560px;margin:auto">
+      <h1>${pend ? "Tu cuenta está pendiente de aprobación" : "Tu solicitud no fue aprobada"}</h1>
+      <p>${pend ? `Hola, ${esc(S.perfil.nombre)}. Ya recibimos tu registro con <b>${esc(S.email)}</b>. El administrador tiene que aprobarlo y asignarte tu rol y tu jefe. Cuando lo haga, entrá de nuevo.`
+        : "El administrador no aprobó esta cuenta. Si creés que es un error, hablá con el área de Administración de tu empresa."}</p>
+      <div><button data-a="salir">Cerrar sesión</button></div></div></div>`;
+    return;
+  }
+  const [mons, equipo] = await Promise.all([
+    q(sb.from("monedas").select("*").order("orden")).catch(() => []),
+    q(sb.from("perfiles").select("id").eq("jefe_id", S.uid)).catch(() => []),
+  ]);
+  S.monedas = Object.fromEntries((mons || []).map((m) => [m.codigo, m]));
+  S.equipo = (equipo || []).length;
   montarShell();
   if (!location.hash.startsWith("#/")) location.replace("#/inicio");
   render();
 }
 async function cargarPerfil() { S.perfil = await q(sb.from("perfiles").select("*").eq("id", S.uid).maybeSingle()); }
+const esAdmin = () => S.perfil.rol === "admin";
+const esFinanzas = () => ["finanzas", "admin"].includes(S.perfil.rol);
 
 function ruta() { const p = location.hash.replace(/^#\/?/, "").split("/"); return [p[0] || "inicio", p[1] || null]; }
 
@@ -185,7 +225,7 @@ function pintarTema() {
   $("#btn-tema").innerHTML = icono(oscuro ? "sun" : "moon");
 }
 function pintarCuenta() {
-  const p = S.perfil, rol = { empleado: "Empleada", jefe: "Jefe", finanzas: "Finanzas" }[p.rol];
+  const p = S.perfil, rol = ROLES[p.rol] || p.rol;
   $("#btn-cuenta").innerHTML = `${avatar(p.nombre, p.foto_path)}<span class="solo-compu small"><b>${esc(p.nombre.split(" ")[0])}</b></span>${icono("down")}`;
   $("#desplegable").innerHTML = `
     <div class="quien"><b>${esc(p.nombre)}</b><div class="xs muted">${esc(rol)} · ${esc(S.email)}</div></div>
@@ -196,33 +236,29 @@ function pintarCuenta() {
 }
 
 function menu() {
-  const r = S.perfil.rol, mias = S.rends.filter((x) => x.empleado_id === S.uid), otras = S.rends.filter((x) => x.empleado_id !== S.uid);
-  const sub = (base, lista) => Object.keys(GRUPOS).map((k) => ({ ruta: `${base}/${k}`, txt: GRUPO_TXT[k], n: lista.filter((x) => enGrupo(x, k)).length }));
-  if (r === "jefe") return [
-    { ruta: "inicio", txt: "Inicio", ico: "home" },
-    { grupo: "Aprobar" },
-    { ruta: "aprobar", txt: "Por aprobar", ico: "inbox", n: otras.filter((x) => x.estado === "pendiente_jefe").length, alerta: true },
-    { ruta: "equipo", txt: "Mi equipo", ico: "users", sub: sub("equipo", otras) },
-    { grupo: "Calidad" },
-    { ruta: "calidad", txt: "Control de calidad", ico: "shield" },
-  ];
-  if (r === "finanzas") return [
-    { ruta: "inicio", txt: "Inicio", ico: "home" },
-    { grupo: "Finanzas" },
-    { ruta: "revision", txt: "Revisión Finanzas", ico: "inbox", n: S.rends.filter((x) => x.estado === "revision_finanzas").length, alerta: true },
-    { ruta: "reembolsar", txt: "A reembolsar", ico: "wallet", n: S.rends.filter((x) => ["aprobada", "aprobada_parcial"].includes(x.estado)).length, alerta: true },
+  const mias = S.rends.filter((x) => x.empleado_id === S.uid), otras = S.rends.filter((x) => x.empleado_id !== S.uid);
+  const delEquipo = otras.filter((x) => x.perfiles?.jefe_id === S.uid);
+  const sub = (base, lista, sin = []) => Object.keys(GRUPOS).filter((k) => !sin.includes(k)).map((k) => ({ ruta: `${base}/${k}`, txt: GRUPO_TXT[k], n: lista.filter((x) => enGrupo(x, k)).length }));
+  const items = [{ ruta: "inicio", txt: "Inicio", ico: "home" }];
+  // Quien tiene equipo ve primero lo que tiene que aprobar
+  const aprobar = S.equipo || delEquipo.length ? [{ grupo: "Aprobar" },
+    { ruta: "aprobar", txt: "Por aprobar", ico: "inbox", n: delEquipo.filter((x) => x.estado === "pendiente_jefe").length, alerta: true },
+    { ruta: "equipo", txt: "Mi equipo", ico: "users", sub: sub("equipo", delEquipo, ["borrador"]) }] : [];
+  const finanzas = esFinanzas() ? [{ grupo: "Finanzas" },
+    { ruta: "revision", txt: "Revisión Finanzas", ico: "inbox", n: otras.filter((x) => x.estado === "revision_finanzas").length, alerta: true },
+    { ruta: "reembolsar", txt: "A reembolsar", ico: "wallet", n: otras.filter((x) => ["aprobada", "aprobada_parcial"].includes(x.estado)).length, alerta: true },
     { ruta: "historial", txt: "Historial", ico: "history" },
-    { ruta: "totales", txt: "Totales", ico: "chart" },
-    { grupo: "Calidad" },
-    { ruta: "calidad", txt: "Control de calidad", ico: "shield" },
-  ];
-  return [
-    { ruta: "inicio", txt: "Inicio", ico: "home" },
-    { ruta: "nueva", txt: "Nueva rendición", ico: "plus" },
-    { ruta: "rendiciones", txt: "Mis rendiciones", ico: "receipt", sub: sub("rendiciones", mias) },
-    { grupo: "Calidad" },
-    { ruta: "calidad", txt: "Control de calidad", ico: "shield" },
-  ];
+    { ruta: "totales", txt: "Totales", ico: "chart" }] : [];
+  const admin = esAdmin() ? [{ grupo: "Administración" },
+    { ruta: "usuarios", txt: "Usuarios", ico: "users", n: S.pendientesAlta, alerta: true },
+    { ruta: "todas", txt: "Todas las rendiciones", ico: "receipt" },
+    { ruta: "config", txt: "Monedas y topes", ico: "settings" }] : S.perfil.rol === "finanzas" ? [{ ruta: "config", txt: "Monedas y topes", ico: "settings" }] : [];
+  // Todos los que tienen cuenta activa pueden rendir sus propios gastos
+  const mios = [{ grupo: "Mis gastos" }, { ruta: "nueva", txt: "Nueva rendición", ico: "plus" },
+    { ruta: "rendiciones", txt: "Mis rendiciones", ico: "receipt", sub: sub("rendiciones", mias) }];
+  const orden = S.perfil.rol === "empleado" ? [...mios, ...aprobar] : [...aprobar, ...finanzas, ...admin, ...mios];
+  if (S.perfil.rol === "empleado") orden.push(...finanzas, ...admin);
+  return [...items, ...orden, { grupo: "Calidad" }, { ruta: "calidad", txt: "Control de calidad", ico: "shield" }];
 }
 
 function pintarNav(base, arg) {
@@ -239,19 +275,21 @@ function pintarNav(base, arg) {
     return `<a class="nav-item" href="#/${it.ruta}" ${base === it.ruta ? 'aria-current="page"' : ""} title="${esc(it.txt)}">${icono(it.ico)}<span class="txt">${esc(it.txt)}</span>${cuenta}</a>`;
   }).join("");
   // Barra de abajo en el celular: los 3 primeros accesos + el menú completo
-  const rapidos = items.filter((i) => i.ruta).slice(0, 3);
+  const rapidos = items.filter((i) => i.ruta).slice(0, 3);   // en el celular, los 3 primeros accesos
   $("#abajo").innerHTML = rapidos.map((i) => `<a href="#/${i.sub ? i.ruta + "/todas" : i.ruta}" ${base === i.ruta ? 'aria-current="page"' : ""}>${icono(i.ico)}<span>${esc(i.txt.replace("Mi equipo", "Equipo").replace("Mis rendiciones", "Rendiciones").replace("Nueva rendición", "Nueva").replace("Revisión Finanzas", "Revisión"))}</span></a>`).join("")
     + `<button data-a="abrir-menu">${icono("menu")}<span>Más</span></button>`;
 }
 
 const TITULOS = { inicio: "Inicio", nueva: "Nueva rendición", rendiciones: "Mis rendiciones", aprobar: "Por aprobar",
   equipo: "Rendiciones del equipo", revision: "Revisión Finanzas", reembolsar: "A reembolsar", historial: "Historial",
-  totales: "Totales", calidad: "Control de calidad", perfil: "Mi perfil", r: "Rendición" };
+  totales: "Totales", calidad: "Control de calidad", perfil: "Mi perfil", r: "Rendición", usuarios: "Usuarios",
+  todas: "Todas las rendiciones", config: "Monedas y topes" };
 
 async function cargarRends() {
   S.rends = await q(sb.from("rendiciones")
-    .select("id,titulo,estado,creada,enviada,total_aprobado,empleado_id,es_prueba,perfiles(nombre,foto_path),gastos(id,total,estado,foto_path)")
+    .select("id,titulo,estado,creada,enviada,total_aprobado,empleado_id,es_prueba,pago_fecha,pago_confirmado,perfiles!empleado_id(nombre,foto_path,jefe_id),gastos(id,total,estado,foto_path,moneda,tasa_uyu)")
     .order("creada", { ascending: false }));
+  if (esAdmin()) S.pendientesAlta = (await q(sb.from("perfiles").select("id").eq("estado_cuenta", "pendiente")).catch(() => [])).length;
 }
 
 let renderando = 0;
@@ -271,7 +309,8 @@ async function render() {
     const migas = base === "r" ? `<span class="migas">Rendiciones ›</span>` : (arg && GRUPO_TXT[arg] ? `<span class="migas">${esc(TITULOS[base])} ›</span>` : "");
     $("#titulo").innerHTML = migas + esc(base !== "r" && arg && GRUPO_TXT[arg] ? GRUPO_TXT[arg] : titulo);
     document.title = `${$("#titulo").textContent.replace("›", "·")} · Rendí`;
-    const vista = S.recuperar ? vistaRecuperar : (VISTAS[base] || vistaInicio);
+    const soloAdmin = ["usuarios", "todas"].includes(base) && !esAdmin(), soloFin = ["revision", "reembolsar", "historial", "totales", "config"].includes(base) && !esFinanzas();
+    const vista = S.recuperar ? vistaRecuperar : soloAdmin || soloFin ? vistaInicio : (VISTAS[base] || vistaInicio);
     const html = await vista(arg);
     if (yo !== renderando) return;
     c.innerHTML = html;
@@ -294,12 +333,14 @@ function marcarTablas(root) {
 
 // ---------------------------------------------------------------- listas
 function filaRend(r, mostrarQuien = true) {
-  const n = r.gastos?.length || 0, tot = (r.gastos || []).reduce((s, g) => s + Number(g.total || 0), 0);
-  const fotos = (r.gastos || []).filter((g) => g.foto_path);
+  const gs = r.gastos || [], n = gs.length;
+  const fotos = gs.filter((g) => g.foto_path);
+  const extranjera = gs.some((g) => g.moneda && g.moneda !== "UYU");
   const texto = `${r.titulo} ${r.perfiles?.nombre || ""} ${EST_R[r.estado]?.[0] || ""}`.toLowerCase();
+  const pagado = r.estado === "reembolsada" && r.pago_fecha ? ` · pagado ${fecha(r.pago_fecha)}${r.pago_confirmado ? " · recibido ✓" : ""}` : "";
   const fila = `<a class="fila-r" href="#/r/${r.id}" data-texto="${esc(texto)}">
     <span class="mini">${fotos.length ? `<img data-foto="${esc(fotos[0].foto_path)}" alt="">${fotos.length > 1 ? `<span class="mas">+${fotos.length - 1}</span>` : ""}` : icono("receipt")}</span>
-    <span><b>${esc(r.titulo)}</b><span class="meta">${mostrarQuien && r.empleado_id !== S.uid ? esc(r.perfiles?.nombre) + " · " : ""}${n} ticket${n === 1 ? "" : "s"} · ${plata(tot)}${r.total_aprobado != null ? " · a reembolsar " + plata(r.total_aprobado) : ""} · ${fecha(r.enviada || r.creada)}</span></span>
+    <span><b>${esc(r.titulo)}</b><span class="meta">${mostrarQuien && r.empleado_id !== S.uid ? esc(r.perfiles?.nombre) + " · " : ""}${n} ticket${n === 1 ? "" : "s"} · ${totalTickets(gs)}${r.total_aprobado != null ? ` · a reembolsar ${extranjera ? "≈ " : ""}${plata(r.total_aprobado)}` : ""} · ${fecha(r.enviada || r.creada)}${pagado}</span></span>
     <span class="lado">${pill(EST_R, r.estado)}${icono("chevron")}</span>
   </a>`;
   if (!borrable(r)) return `<div class="fila-wrap">${fila}</div>`;
@@ -325,82 +366,132 @@ function listaRends(rs, vacio, { mostrarQuien = true, buscar = true, accion = ""
     ${barra}<div class="filas">${rs.map((r) => filaRend(r, mostrarQuien)).join("")}</div>
     ${nBorr ? `<p class="xs muted pista-desliza">Deslizá un borrador hacia la izquierda para eliminarlo.</p>` : ""}`;
 }
-function chipsGrupo(base, lista, actual) {
-  return `<div class="chips" role="tablist" aria-label="Filtrar por estado">${Object.keys(GRUPOS).map((k) => {
+function chipsGrupo(base, lista, actual, sin = []) {
+  return `<div class="chips" role="tablist" aria-label="Filtrar por estado">${Object.keys(GRUPOS).filter((k) => !sin.includes(k)).map((k) => {
     const n = lista.filter((x) => enGrupo(x, k)).length;
     return `<a class="chip btn" role="tab" href="#/${base}/${k}" aria-pressed="${k === actual}" aria-selected="${k === actual}">${esc(GRUPO_TXT[k])} <span class="muted">${n}</span></a>`;
   }).join("")}</div>`;
 }
+// Descargar lo que se está viendo: Excel, CSV o PDF. Cada persona descarga solo lo que puede ver.
+function botonDescargar(titulo, rs) {
+  S.exportar = { titulo, ids: rs.map((r) => r.id) };
+  if (!rs.length) return "";
+  return `<details class="descargar"><summary class="btn">${icono("download")} Descargar</summary><div class="menu-desc" role="menu">
+    <button type="button" data-a="exportar" data-f="xlsx" role="menuitem">Excel (.xlsx)</button>
+    <button type="button" data-a="exportar" data-f="pdf" role="menuitem">PDF</button>
+    <button type="button" data-a="exportar" data-f="csv" role="menuitem">CSV</button></div></details>`;
+}
+const cabecera = (izq, rs, titulo) => `<div class="fila entre cabecera">${izq}${botonDescargar(titulo, rs)}</div>`;
+
+const misRends = () => S.rends.filter((r) => r.empleado_id === S.uid);
+const delEquipo = () => S.rends.filter((r) => r.empleado_id !== S.uid && r.perfiles?.jefe_id === S.uid);
+const deOtros = () => S.rends.filter((r) => r.empleado_id !== S.uid);
 
 async function vistaRendiciones(g = "todas") {
-  const mias = S.rends.filter((r) => r.empleado_id === S.uid);
+  const mias = misRends();
   const grupo = GRUPOS[g] !== undefined ? g : "todas";
-  return `<div class="lista">${chipsGrupo("rendiciones", mias, grupo)}
-    ${listaRends(mias.filter((r) => enGrupo(r, grupo)), grupo === "todas" ? "Todavía no tenés rendiciones." : `No tenés rendiciones ${GRUPO_TXT[grupo].toLowerCase()}.`,
+  const lista = mias.filter((r) => enGrupo(r, grupo));
+  return `<div class="lista">${cabecera(chipsGrupo("rendiciones", mias, grupo), lista, "Mis rendiciones · " + GRUPO_TXT[grupo])}
+    ${listaRends(lista, grupo === "todas" ? "Todavía no tenés rendiciones." : `No tenés rendiciones ${GRUPO_TXT[grupo].toLowerCase()}.`,
       { mostrarQuien: false, seleccionable: true, accion: `<a class="btn-p" href="#/nueva">${icono("plus")} Nueva rendición</a>` })}</div>`;
 }
+// El jefe ve lo que su equipo ya le envió: los borradores son privados de cada persona hasta que los envía
 async function vistaEquipo(g = "todas") {
-  const otras = S.rends.filter((r) => r.empleado_id !== S.uid);
+  const otras = delEquipo();
+  const grupo = GRUPOS[g] !== undefined && g !== "borrador" ? g : "todas";
+  const lista = otras.filter((r) => enGrupo(r, grupo));
+  return `<div class="lista">${cabecera(chipsGrupo("equipo", otras, grupo, ["borrador"]), lista, "Mi equipo · " + GRUPO_TXT[grupo])}
+    <p class="xs muted">Ves lo que tu equipo ya envió. Los borradores son privados hasta que cada persona los envía.</p>
+    ${listaRends(lista, "No hay rendiciones en este estado.")}</div>`;
+}
+async function vistaTodas(g = "todas") {
+  const todas = deOtros().concat(misRends());
   const grupo = GRUPOS[g] !== undefined ? g : "todas";
-  return `<div class="lista">${chipsGrupo("equipo", otras, grupo)}${listaRends(otras.filter((r) => enGrupo(r, grupo)), "No hay rendiciones en este estado.")}</div>`;
+  const lista = todas.filter((r) => enGrupo(r, grupo)).sort((a, b) => String(b.creada).localeCompare(String(a.creada)));
+  return `<div class="lista">${cabecera(chipsGrupo("todas", todas, grupo), lista, "Todas las rendiciones · " + GRUPO_TXT[grupo])}
+    <p class="xs muted">Como administración ves las rendiciones de todas las personas, en cualquier estado.</p>
+    ${listaRends(lista, "No hay rendiciones en este estado.")}</div>`;
 }
 async function vistaAprobar() {
-  const rs = S.rends.filter((r) => r.estado === "pendiente_jefe" && r.empleado_id !== S.uid);
+  const rs = delEquipo().filter((r) => r.estado === "pendiente_jefe");
   return `<div class="lista"><p class="muted">Rendiciones de tu equipo que esperan tu decisión. Revisá cada ticket contra su foto antes de aprobar.</p>
     ${listaRends(rs, "No tenés nada pendiente. ¡Al día!")}</div>`;
 }
 async function vistaRevision() {
-  return `<div class="lista"><p class="muted">El jefe ya aprobó y lo aprobado supera ${plata(3000)}: falta tu visto bueno.</p>
-    ${listaRends(S.rends.filter((r) => r.estado === "revision_finanzas"), "No hay rendiciones esperando a Finanzas.")}</div>`;
+  const rs = deOtros().filter((r) => r.estado === "revision_finanzas");
+  return `<div class="lista"><p class="muted">Necesitan tu visto bueno antes de pagarse: lo que el jefe aprobó por más de ${plata(3000)}, y lo que rinden personas sin jefe (por ejemplo, Dirección).</p>
+    ${listaRends(rs, "No hay rendiciones esperando a Finanzas.")}</div>`;
 }
 async function vistaReembolsar() {
-  return `<div class="lista"><p class="muted">Aprobadas y listas para pagar. Cuando hagas la transferencia, marcalas como reembolsadas.</p>
-    ${listaRends(S.rends.filter((r) => ["aprobada", "aprobada_parcial"].includes(r.estado)), "No hay reembolsos pendientes.")}</div>`;
+  const rs = deOtros().filter((r) => ["aprobada", "aprobada_parcial"].includes(r.estado));
+  return `<div class="lista">${cabecera(`<p class="muted" style="max-width:72ch">Todo lo aprobado, <b>de cualquier monto</b>: lo de hasta ${plata(3000)} llega acá apenas lo aprueba el jefe; lo de más, después de tu visto bueno. Al pagar, registrá la fecha, el medio y el n.º de comprobante de la transferencia.</p>`, rs, "A reembolsar")}
+    ${listaRends(rs, "No hay reembolsos pendientes.")}</div>`;
 }
 async function vistaHistorial() {
-  return `<div class="lista">${listaRends(S.rends.filter((r) => ["reembolsada", "rechazada"].includes(r.estado)), "Todavía no hay reembolsos.")}</div>`;
+  const rs = deOtros().filter((r) => ["reembolsada", "rechazada"].includes(r.estado));
+  return `<div class="lista">${cabecera(`<p class="muted">Pagadas y rechazadas. En cada pagada figura cuándo se pagó y si la persona confirmó que lo recibió.</p>`, rs, "Historial")}
+    ${listaRends(rs, "Todavía no hay reembolsos.")}</div>`;
 }
 
 // ---------------------------------------------------------------- inicio por rol
+const kpi = (v, k, href, atencion = false) => `<a class="kpi ${atencion ? "atencion" : ""}" href="${href}"><span class="v">${v}</span><span class="k">${esc(k)}</span></a>`;
+const sumaAprobado = (rs) => rs.reduce((s, r) => s + Number(r.total_aprobado || 0), 0);
 async function vistaInicio() {
   const p = S.perfil, nombre = esc(p.nombre.split(" ")[0]);
-  const kpi = (v, k, href, atencion = false) => `<a class="kpi ${atencion ? "atencion" : ""}" href="${href}"><span class="v">${v}</span><span class="k">${esc(k)}</span></a>`;
-  if (p.rol === "jefe") {
-    const otras = S.rends.filter((r) => r.empleado_id !== S.uid), pend = otras.filter((r) => r.estado === "pendiente_jefe");
-    const monto = pend.reduce((s, r) => s + (r.gastos || []).filter((g) => g.estado === "pendiente").reduce((a, g) => a + Number(g.total || 0), 0), 0);
-    return `<div class="lista"><div><h2>Hola, ${nombre}</h2><p class="muted">${pend.length ? `Tenés ${pend.length} rendición${pend.length === 1 ? "" : "es"} esperando tu aprobación.` : "No tenés nada pendiente de aprobar."}</p></div>
+  const mias = misRends(), borr = mias.filter((r) => r.estado === "borrador").length;
+  const misGastos = `<p class="small muted">Tus propios gastos: ${mias.length} rendición${mias.length === 1 ? "" : "es"}${borr ? `, ${borr} en borrador` : ""} · <a href="#/nueva">Nueva rendición</a> · <a href="#/rendiciones/todas">Ver las mías</a></p>`;
+  if (esAdmin()) {
+    const otras = deOtros(), curso = otras.filter((r) => ["pendiente_jefe", "revision_finanzas"].includes(r.estado));
+    const pagar = otras.filter((r) => ["aprobada", "aprobada_parcial"].includes(r.estado));
+    const mes = otras.filter((r) => r.estado === "reembolsada" && String(r.pago_fecha || "").slice(0, 7) === mesActual);
+    const equipo = delEquipo().filter((r) => r.estado === "pendiente_jefe");
+    return `<div class="lista"><div><h2>Hola, ${nombre}</h2><p class="muted">Ves todo: ${S.pendientesAlta ? `<b>${S.pendientesAlta} registro${S.pendientesAlta === 1 ? "" : "s"} esperan tu aprobación</b>` : "no hay registros pendientes"}${equipo.length ? ` · ${equipo.length} rendición${equipo.length === 1 ? "" : "es"} de tu equipo para aprobar` : ""}.</p>${misGastos}</div>
+      <div class="kpis">${kpi(S.pendientesAlta, "Registros por aprobar", "#/usuarios", S.pendientesAlta > 0)}${kpi(curso.length, "Rendiciones en curso", "#/todas/pendiente")}
+        ${kpi(plata(sumaAprobado(pagar)), "Aprobado sin pagar", "#/reembolsar")}${kpi(plata(sumaAprobado(mes)), "Pagado este mes", "#/historial")}</div>
+      ${equipo.length ? `<div class="fila entre"><h2>Tu equipo espera tu aprobación</h2><a class="btn-link" href="#/aprobar">Ver todas ›</a></div>${listaRends(equipo.slice(0, 3), "", { buscar: false })}` : ""}
+      <div class="fila entre"><h2>Últimas rendiciones de la empresa</h2><a class="btn-link" href="#/todas/todas">Ver todas ›</a></div>
+      ${listaRends(otras.slice(0, 5), "Todavía no hay rendiciones.", { buscar: false })}</div>`;
+  }
+  if (p.rol === "finanzas") {
+    const otras = deOtros(), rev = otras.filter((r) => r.estado === "revision_finanzas"), pagar = otras.filter((r) => ["aprobada", "aprobada_parcial"].includes(r.estado));
+    const pagadoMes = otras.filter((r) => r.estado === "reembolsada" && String(r.pago_fecha || "").slice(0, 7) === mesActual);
+    const sinConfirmar = otras.filter((r) => r.estado === "reembolsada" && !r.pago_confirmado).length;
+    return `<div class="lista"><div><h2>Hola, ${nombre}</h2><p class="muted">${rev.length} para firmar · ${pagar.length} para pagar${sinConfirmar ? ` · ${sinConfirmar} pagada${sinConfirmar === 1 ? "" : "s"} sin confirmar por la persona` : ""}.</p>${misGastos}</div>
+      <div class="kpis">${kpi(rev.length, "Para firmar (más de $U 3.000)", "#/revision", rev.length > 0)}${kpi(pagar.length, "Para pagar (cualquier monto)", "#/reembolsar", pagar.length > 0)}
+        ${kpi(plata(sumaAprobado(pagar)), "Monto a reembolsar", "#/reembolsar")}${kpi(plata(sumaAprobado(pagadoMes)), "Pagado este mes", "#/historial")}</div>
+      <div class="grid2"><div class="lista"><div class="fila entre"><h2>Para firmar</h2><a class="btn-link" href="#/revision">Ver todas ›</a></div>${listaRends(rev.slice(0, 4), "Nada para firmar.", { buscar: false })}</div>
+        <div class="lista"><div class="fila entre"><h2>Para pagar</h2><a class="btn-link" href="#/reembolsar">Ver todas ›</a></div>${listaRends(pagar.slice(0, 4), "Nada para pagar.", { buscar: false })}</div></div></div>`;
+  }
+  if (S.equipo || delEquipo().length) {
+    const otras = delEquipo(), pend = otras.filter((r) => r.estado === "pendiente_jefe");
+    const monto = pend.reduce((s, r) => s + (r.gastos || []).filter((g) => g.estado === "pendiente").reduce((a, g) => a + Number(g.total || 0) * Number(g.tasa_uyu || 1), 0), 0);
+    return `<div class="lista"><div><h2>Hola, ${nombre}</h2><p class="muted">${pend.length ? `Tenés ${pend.length} rendición${pend.length === 1 ? "" : "es"} esperando tu aprobación.` : "No tenés nada pendiente de aprobar."}</p>${misGastos}</div>
       <div class="kpis">${kpi(pend.length, "Por aprobar", "#/aprobar", pend.length > 0)}${kpi(plata(monto), "Monto por aprobar", "#/aprobar")}
         ${kpi(otras.filter((r) => r.estado === "revision_finanzas").length, "En Finanzas", "#/equipo/pendiente")}
         ${kpi(otras.filter((r) => ["aprobada", "aprobada_parcial", "reembolsada"].includes(r.estado)).length, "Aprobadas", "#/equipo/aprobada")}</div>
       <div class="fila entre"><h2>Esperan tu aprobación</h2><a class="btn-link" href="#/aprobar">Ver todas ›</a></div>
       ${listaRends(pend.slice(0, 5), "No hay nada esperando.", { buscar: false })}</div>`;
   }
-  if (p.rol === "finanzas") {
-    const rev = S.rends.filter((r) => r.estado === "revision_finanzas"), pagar = S.rends.filter((r) => ["aprobada", "aprobada_parcial"].includes(r.estado));
-    const pagadoMes = S.rends.filter((r) => r.estado === "reembolsada" && String(r.enviada || r.creada).slice(0, 7) === mesActual).reduce((s, r) => s + Number(r.total_aprobado || 0), 0);
-    return `<div class="lista"><div><h2>Hola, ${nombre}</h2><p class="muted">${rev.length} en revisión · ${pagar.length} listas para reembolsar.</p></div>
-      <div class="kpis">${kpi(rev.length, "En revisión", "#/revision", rev.length > 0)}${kpi(pagar.length, "A reembolsar", "#/reembolsar", pagar.length > 0)}
-        ${kpi(plata(pagar.reduce((s, r) => s + Number(r.total_aprobado || 0), 0)), "Monto a reembolsar", "#/reembolsar")}${kpi(plata(pagadoMes), "Reembolsado este mes", "#/historial")}</div>
-      <div class="grid2"><div class="lista"><div class="fila entre"><h2>En revisión</h2><a class="btn-link" href="#/revision">Ver todas ›</a></div>${listaRends(rev.slice(0, 4), "Nada en revisión.", { buscar: false })}</div>
-        <div class="lista"><div class="fila entre"><h2>A reembolsar</h2><a class="btn-link" href="#/reembolsar">Ver todas ›</a></div>${listaRends(pagar.slice(0, 4), "Nada para pagar.", { buscar: false })}</div></div></div>`;
-  }
-  const mias = S.rends.filter((r) => r.empleado_id === S.uid);
   const cant = (g) => mias.filter((r) => enGrupo(r, g)).length;
-  const reemb = mias.filter((r) => r.estado === "reembolsada").reduce((s, r) => s + Number(r.total_aprobado || 0), 0);
-  const devueltas = cant("devuelta"), borr = cant("borrador");
-  const aviso = devueltas ? `Tu jefe te devolvió ${devueltas} rendición${devueltas === 1 ? "" : "es"} para corregir.` : borr ? `Tenés ${borr} borrador${borr === 1 ? "" : "es"} sin enviar.` : "Todo al día.";
-  return `<div class="lista"><div class="fila entre"><div><h2>Hola, ${nombre}</h2><p class="muted">${aviso}</p></div><a class="btn-p" href="#/nueva">${icono("plus")} Nueva rendición</a></div>
+  const reemb = sumaAprobado(mias.filter((r) => r.estado === "reembolsada"));
+  const porConfirmar = mias.filter((r) => r.estado === "reembolsada" && !r.pago_confirmado).length;
+  const devueltas = cant("devuelta");
+  const aviso = devueltas ? `Tu jefe te devolvió ${devueltas} rendición${devueltas === 1 ? "" : "es"} para corregir.`
+    : porConfirmar ? `Finanzas te pagó ${porConfirmar} rendición${porConfirmar === 1 ? "" : "es"}: confirmá que lo recibiste.`
+    : borr ? `Tenés ${borr} borrador${borr === 1 ? "" : "es"} sin enviar.` : "Todo al día.";
+  const pais = PAISES[p.pais] && p.pais !== "UY" ? ` · Rendís en ${esc(PAISES[p.pais].nombre)} (${esc(p.moneda)})` : "";
+  return `<div class="lista"><div class="fila entre"><div><h2>Hola, ${nombre}</h2><p class="muted">${aviso}${pais}</p></div><a class="btn-p" href="#/nueva">${icono("plus")} Nueva rendición</a></div>
     <div class="kpis">${kpi(borr, "Borradores", "#/rendiciones/borrador")}${kpi(cant("pendiente"), "Pendientes", "#/rendiciones/pendiente")}
-      ${kpi(devueltas, "Devueltas", "#/rendiciones/devuelta", devueltas > 0)}${kpi(plata(reemb), "Te reembolsaron", "#/rendiciones/reembolsada")}</div>
+      ${kpi(devueltas, "Devueltas", "#/rendiciones/devuelta", devueltas > 0)}${kpi(plata(reemb), "Te reembolsaron", "#/rendiciones/reembolsada", porConfirmar > 0)}</div>
     <div class="fila entre"><h2>Últimas rendiciones</h2><a class="btn-link" href="#/rendiciones/todas">Ver todas ›</a></div>
     ${listaRends(mias.slice(0, 5), "Todavía no tenés rendiciones.", { mostrarQuien: false, buscar: false, accion: `<a class="btn-p" href="#/nueva">${icono("plus")} Crear la primera</a>` })}</div>`;
 }
 
 async function vistaNueva() {
-  if (S.perfil.rol !== "empleado" && !S.perfil.jefe_id) return `<div class="vacio"><p>Tu usuario no rinde gastos.</p></div>`;
+  const destino = S.perfil.jefe_id ? "tu jefe" : "Finanzas (no tenés jefe asignado)";
   return `<form class="card" data-form="nueva" style="max-width:640px">
     <h2>¿Qué vas a rendir?</h2>
-    <p class="muted small">Agrupá en una rendición los tickets de un viaje o de una actividad. En el paso siguiente les sacás foto.</p>
+    <p class="muted small">Agrupá en una rendición los tickets de un viaje o de una actividad. En el paso siguiente les sacás foto. Cuando la envíes, va a ${destino}.</p>
     <label>Nombre de la rendición<input name="titulo" placeholder="Ej.: Viaje a Salto · visita a cliente" required maxlength="120"></label>
     <div class="fila"><button class="btn-p btn-grande">Crear y agregar tickets</button></div>
   </form>`;
@@ -408,7 +499,7 @@ async function vistaNueva() {
 
 // ---------------------------------------------------------------- perfil y contraseña
 async function vistaPerfil() {
-  const p = S.perfil, rol = { empleado: "Empleada", jefe: "Jefe", finanzas: "Finanzas" }[p.rol];
+  const p = S.perfil, rol = ROLES[p.rol] || p.rol;
   return `<div class="grid2" style="align-items:start">
     <form class="card" data-form="perfil">
       <h2>Mis datos</h2>
@@ -417,6 +508,8 @@ async function vistaPerfil() {
       <label>Nombre<input name="nombre" value="${esc(p.nombre)}" required></label>
       <label>Email<input value="${esc(S.email)}" disabled></label>
       <label>Rol<input value="${esc(rol)} · ${esc(p.area || "")}" disabled></label>
+      <label>País y moneda<input value="${esc(PAISES[p.pais]?.nombre || p.pais || "Uruguay")} · ${esc(p.moneda || "UYU")}" disabled></label>
+      <p class="xs muted">El rol, el jefe y el país los asigna el administrador.</p>
       <div><button class="btn-p">Guardar cambios</button></div>
     </form>
     <div class="lista">
@@ -446,32 +539,130 @@ async function subirAvatar(file) {
   await cargarPerfil(); pintarCuenta();
 }
 
-// ---------------------------------------------------------------- totales (Finanzas)
+// ---------------------------------------------------------------- totales (Finanzas y administración)
 async function vistaTotales() {
   const gs = await q(sb.from("gastos")
-    .select("id,fecha,categoria,estado,comercio,tipo_comprobante,perfiles(nombre),gasto_items(importe,reembolsable,es_alcohol,no_reconocido_por),rendiciones(titulo,estado)"));
+    .select("id,fecha,categoria,estado,comercio,moneda,tasa_uyu,perfiles(nombre),gasto_items(importe,reembolsable,es_alcohol,no_reconocido_por),rendiciones(id,titulo,estado)"));
   const filas = gs.filter((g) => ["aprobado", "aprobado_parcial"].includes(g.estado) && ["aprobada", "aprobada_parcial", "reembolsada"].includes(g.rendiciones?.estado))
     .map((g) => ({ persona: g.perfiles?.nombre || "—", categoria: CATEGORIAS[g.categoria] || g.categoria, mes: String(g.fecha || "").slice(0, 7) || "sin fecha",
-      monto: reembolsable(g.gasto_items), pagado: g.rendiciones.estado === "reembolsada", comercio: g.comercio, rendicion: g.rendiciones.titulo, fecha: g.fecha,
-      comprobante: g.tipo_comprobante === "pago" ? "pago POS (sin e-Ticket)" : "e-Ticket / e-Factura" }));
-  S.totales = filas;
+      moneda: g.moneda || "UYU", monto: reembolsable(g.gasto_items) * Number(g.tasa_uyu || 1), pagado: g.rendiciones.estado === "reembolsada", rend: g.rendiciones.id }));
   const suma = (a) => a.reduce((s, f) => s + f.monto, 0);
   const agrupar = (k) => Object.entries(filas.reduce((a, f) => ((a[f[k]] = (a[f[k]] || 0) + f.monto), a), {})).sort((a, b) => b[1] - a[1]);
   const tabla = (t, fs) => `<div class="card"><h3>${t}</h3><div class="tabla-wrap"><table class="t"><tbody>
     ${fs.length ? fs.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="r num">${plata(v)}</td></tr>`).join("") : `<tr><td class="muted">Sin datos</td></tr>`}</tbody></table></div></div>`;
-  return `<div class="lista"><div class="fila entre"><p class="muted">Lo aprobado, sin lo personal ni lo que el jefe no reconoció.</p><button data-a="csv">${icono("download")} Descargar CSV</button></div>
+  const rs = [...new Set(filas.map((f) => f.rend))].map((id) => ({ id }));
+  return `<div class="lista">${cabecera(`<p class="muted">Lo aprobado, sin lo personal ni lo que el jefe no reconoció. Todo en pesos uruguayos (lo de otras monedas, con la tasa del día en que se cargó).</p>`, rs, "Totales aprobados")}
     <div class="kpis"><div class="kpi"><span class="v">${plata(suma(filas))}</span><span class="k">Aprobado en total</span></div>
       <div class="kpi"><span class="v">${plata(suma(filas.filter((f) => f.pagado)))}</span><span class="k">Ya reembolsado</span></div>
       <div class="kpi"><span class="v">${plata(suma(filas.filter((f) => !f.pagado)))}</span><span class="k">Pendiente de reembolso</span></div></div>
-    <div class="grid2">${tabla("Por persona", agrupar("persona"))}${tabla("Por categoría", agrupar("categoria"))}${tabla("Por mes", agrupar("mes"))}</div></div>`;
+    <div class="grid2">${tabla("Por persona", agrupar("persona"))}${tabla("Por categoría", agrupar("categoria"))}${tabla("Por mes", agrupar("mes"))}${tabla("Por moneda original", agrupar("moneda"))}</div></div>`;
 }
-function descargarCsv() {
-  const f = S.totales || [];
-  const lineas = [["fecha", "persona", "rendicion", "comercio", "comprobante", "categoria", "monto_reembolsable", "reembolsado"]]
-    .concat(f.map((x) => [x.fecha, x.persona, x.rendicion, x.comercio, x.comprobante, x.categoria, x.monto, x.pagado ? "si" : "no"]));
-  const csv = lineas.map((l) => l.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(";")).join("\n");
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv" })); a.download = "rendi-totales.csv"; a.click();
+
+// ---------------------------------------------------------------- descargas: CSV, Excel y PDF
+const LIB = { xlsx: "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm", jspdf: "https://cdn.jsdelivr.net/npm/jspdf@2.5.1/+esm",
+  autotable: "https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/+esm" };
+async function filasParaDescargar(ids) {
+  const gs = [];
+  for (let i = 0; i < ids.length; i += 80) {
+    gs.push(...await q(sb.from("gastos").select("id,fecha,comercio,categoria,estado,tipo_comprobante,medio_pago,nro_operacion,rut_emisor,serie,numero,total,moneda,tasa_uyu,perfiles(nombre),gasto_items(importe,reembolsable,es_alcohol,no_reconocido_por),rendiciones(titulo,estado,pago_fecha)")
+      .in("rendicion_id", ids.slice(i, i + 80)).order("fecha")));
+  }
+  return gs.map((g) => {
+    const reemb = reembolsable(g.gasto_items);
+    return { "Fecha": g.fecha || "", "Persona": g.perfiles?.nombre || "", "Rendición": g.rendiciones?.titulo || "",
+      "Estado rendición": EST_R[g.rendiciones?.estado]?.[0] || "", "Comercio": g.comercio || "",
+      "Comprobante": g.tipo_comprobante === "pix" ? "Pix" : g.tipo_comprobante === "pago" ? `Pago ${g.medio_pago || ""}`.trim() : "Fiscal",
+      "N.º": g.tipo_comprobante === "cfe" ? `${g.serie || ""} ${g.numero || ""}`.trim() : g.nro_operacion || "",
+      "Categoría": CATEGORIAS[g.categoria] || g.categoria, "Moneda": g.moneda || "UYU", "Total": Number(g.total || 0),
+      "Se reembolsa": reemb, "Equivale en $U": Math.round(reemb * Number(g.tasa_uyu || 1) * 100) / 100,
+      "Estado ticket": EST_G[g.estado]?.[0] || g.estado, "Pagado el": g.rendiciones?.pago_fecha || "" };
+  });
+}
+async function exportar(formato) {
+  const x = S.exportar; if (!x?.ids?.length) return toast("No hay nada para descargar.", true);
+  toast("Preparando la descarga…");
+  const filas = await filasParaDescargar(x.ids);
+  if (!filas.length) return toast("Esas rendiciones no tienen tickets.", true);
+  const nombre = "rendi-" + x.titulo.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const cols = Object.keys(filas[0]);
+  const bajar = (blob, ext) => { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `${nombre}.${ext}`; a.click(); };
+  const totalU = filas.reduce((s, f) => s + f["Equivale en $U"], 0);
+  if (formato === "csv") {
+    const csv = [cols].concat(filas.map((f) => cols.map((c) => f[c]))).map((l) => l.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(";")).join("\n");
+    return bajar(new Blob(["﻿" + csv], { type: "text/csv" }), "csv");
+  }
+  if (formato === "xlsx") {
+    const m = await import(LIB.xlsx), X = m.utils ? m : m.default;
+    const hoja = X.utils.json_to_sheet(filas);
+    X.utils.sheet_add_aoa(hoja, [[], ["", "", "", "", "", "", "", "", "", "", "Total en $U", totalU]], { origin: -1 });
+    hoja["!cols"] = cols.map((c) => ({ wch: Math.max(10, c.length + 2, ...filas.map((f) => String(f[c]).length + 1).slice(0, 200)) }));
+    const libro = X.utils.book_new(); X.utils.book_append_sheet(libro, hoja, "Gastos");
+    return X.writeFile(libro, `${nombre}.xlsx`);
+  }
+  let jsPDF, autoTable;
+  try {
+    const [p, at] = await Promise.all([import(LIB.jspdf), import(LIB.autotable)]);
+    jsPDF = p.jsPDF || p.default?.jsPDF || p.default; autoTable = at.default || at.autoTable;
+  } catch {
+    // Si no carga la librería (sin conexión al CDN), se abre una versión para imprimir y "Guardar como PDF"
+    const w = open("", "_blank");
+    if (!w) return toast("Permití las ventanas emergentes para descargar el PDF.", true);
+    w.document.write(`<!doctype html><meta charset="utf-8"><title>${esc(x.titulo)}</title><style>body{font:12px Arial;margin:24px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:4px;text-align:left}th{background:#e2f2ec}</style>
+      <h2>Rendí · ${esc(x.titulo)}</h2><p>Descargado por ${esc(S.perfil.nombre)} el ${new Date().toLocaleString("es-UY")}</p>
+      <table><tr>${cols.map((c) => `<th>${esc(c)}</th>`).join("")}</tr>${filas.map((f) => `<tr>${cols.map((c) => `<td>${esc(f[c])}</td>`).join("")}</tr>`).join("")}</table>
+      <p><b>Total en $U: ${plata(totalU)}</b></p>`);
+    w.document.close(); w.focus(); w.print(); return;
+  }
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+  doc.setFontSize(15); doc.text(`Rendí · ${x.titulo}`, 36, 40);
+  doc.setFontSize(9); doc.setTextColor(110); doc.text(`Descargado por ${S.perfil.nombre} el ${new Date().toLocaleString("es-UY")} · ${filas.length} tickets`, 36, 56);
+  const porMoneda = Object.entries(filas.reduce((a, f) => ((a[f.Moneda] = (a[f.Moneda] || 0) + f["Se reembolsa"]), a), {}))
+    .map(([m, v]) => dinero(v, m)).join(" · ");
+  const pdfCols = ["Fecha", "Persona", "Rendición", "Comercio", "Comprobante", "Categoría", "Total", "Se reembolsa", "Equivale en $U", "Estado ticket"];
+  autoTable(doc, { startY: 70, head: [pdfCols], styles: { fontSize: 7.5, cellPadding: 3 }, headStyles: { fillColor: [11, 122, 94] },
+    body: filas.map((f) => pdfCols.map((c) => ["Total", "Se reembolsa"].includes(c) ? dinero(f[c], f.Moneda) : c === "Equivale en $U" ? plata(f[c]) : String(f[c]))),
+    foot: [["", "", "", "", "", "", "", porMoneda, plata(totalU), ""]], footStyles: { fillColor: [226, 242, 236], textColor: 20 } });
+  doc.save(`${nombre}.pdf`);
+}
+
+// ---------------------------------------------------------------- administración: usuarios
+async function vistaUsuarios() {
+  const us = await rpc("admin_usuarios");
+  const activos = us.filter((u) => u.estado_cuenta === "activa");
+  const sel = (nombre, opciones, actual) => `<select name="${nombre}">${opciones.map(([v, t]) => `<option value="${esc(v)}" ${String(actual ?? "") === String(v) ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
+  const tarjeta = (u) => `<form class="card usuario ${u.estado_cuenta}" data-form="usuario" data-id="${u.id}">
+    <div class="fila entre"><div><h3>${esc(u.nombre)}</h3><p class="xs muted">${esc(u.email)} · registrado ${fecha(u.creado)}${u.ultimo_ingreso ? " · último ingreso " + fecha(u.ultimo_ingreso) : ""}</p></div>
+      ${u.estado_cuenta === "pendiente" ? `<span class="pill e-pend">Pendiente</span>` : u.estado_cuenta === "rechazada" ? `<span class="pill e-mal">Rechazada</span>` : `<span class="pill e-ok">Activa</span>`}</div>
+    ${u.estado_cuenta === "pendiente" && /@(gmail|hotmail|outlook|live|yahoo|icloud)\./i.test(u.email) ? `<p class="alerta warn"><span class="nivel">Ojo</span><span>Se registró con un correo personal, no corporativo.</span></p>` : ""}
+    <div class="campos">
+      <label>Rol${sel("rol", Object.entries(ROLES), u.rol)}</label>
+      <label>Jefe${sel("jefe", [["", "Sin jefe (va directo a Finanzas)"], ...activos.filter((a) => a.id !== u.id).map((a) => [a.id, `${a.nombre} · ${ROLES[a.rol] || a.rol}`])], u.jefe_id)}</label>
+      <label>País${sel("pais", Object.entries(PAISES).map(([k, v]) => [k, `${v.nombre} (${v.moneda})`]), u.pais)}</label>
+      <label>Área<input name="area" value="${esc(u.area || "")}"></label>
+      <label>Estado${sel("estado", [["activa", "Activa"], ["pendiente", "Pendiente"], ["rechazada", "Rechazada"]], u.estado_cuenta)}</label>
+    </div>
+    <div class="fila">${u.estado_cuenta === "pendiente" ? `<button class="btn-p" name="accion" value="aprobar">Aprobar con estos datos</button><button class="btn-mal" name="accion" value="rechazar">Rechazar</button>`
+      : `<button class="btn-p" name="accion" value="guardar">Guardar cambios</button>`}</div></form>`;
+  const pend = us.filter((u) => u.estado_cuenta === "pendiente");
+  return `<div class="lista"><p class="muted">Quien se registra queda pendiente hasta que lo apruebes. Al aprobarlo elegís su rol, su jefe y su país (define la moneda y los comprobantes que puede cargar).</p>
+    ${pend.length ? `<h2>Solicitudes pendientes (${pend.length})</h2>${pend.map(tarjeta).join("")}` : `<div class="vacio"><p>No hay solicitudes pendientes.</p></div>`}
+    <h2>Usuarios (${us.length - pend.length})</h2>
+    <div class="buscar">${icono("search")}<input type="search" data-filtro-usuarios placeholder="Buscar por nombre, email o rol" aria-label="Buscar usuarios"></div>
+    <div class="lista" id="usuarios">${us.filter((u) => u.estado_cuenta !== "pendiente").map(tarjeta).join("")}</div></div>`;
+}
+
+// ---------------------------------------------------------------- monedas y topes (Finanzas y administración)
+async function vistaConfig() {
+  const [mons, pols] = await Promise.all([q(sb.from("monedas").select("*").order("orden")), q(sb.from("politicas").select("*"))]);
+  return `<div class="grid2" style="align-items:start">
+    <div class="card"><h2>Monedas</h2><p class="small muted">Cuántos pesos uruguayos vale cada moneda. Se usa para comparar con los topes y para los totales. Cada ticket guarda la tasa del día en que se cargó.</p>
+      ${mons.map((m) => `<form class="fila" data-form="tasa" data-codigo="${m.codigo}"><label style="flex:1 1 160px">${esc(m.nombre)} (${esc(m.simbolo)})
+        <input name="tasa" inputmode="decimal" value="${esc(String(m.tasa_uyu).replace(".", ","))}" ${m.codigo === "UYU" ? "disabled" : ""}></label>
+        ${m.codigo === "UYU" ? `<span class="xs muted">Moneda base</span>` : `<button>Guardar</button>`}</form>`).join("")}
+      <p class="xs muted">Las tasas que vienen cargadas son aproximadas: actualizalas con la cotización del día.</p></div>
+    <div class="card"><h2>Topes por ticket</h2><p class="small muted">En pesos uruguayos. Si un ticket (pasado a pesos) supera el tope de su categoría, hay que justificarlo.</p>
+      ${pols.map((t) => `<form class="fila" data-form="tope" data-cat="${t.categoria}"><label style="flex:1 1 160px">${esc(CATEGORIAS[t.categoria] || t.categoria)}
+        <input name="tope" inputmode="decimal" value="${esc(t.tope_comprobante)}"></label><button>Guardar</button></form>`).join("")}</div></div>`;
 }
 
 // ---------------------------------------------------------------- Control de calidad
@@ -501,16 +692,17 @@ async function vistaCalidad() {
 
 // ---------------------------------------------------------------- detalle de una rendición
 function lineaDeTiempo(r, aprs) {
-  const pasaFin = r.estado === "revision_finanzas" || aprs.some((a) => a.etapa === "finanzas") || Number(r.total_aprobado || 0) > 3000;
-  const pasos = ["Borrador", "Jefe", ...(pasaFin ? ["Finanzas"] : []), "Aprobada", "Reembolsada"];
+  const sinJefe = !r.perfiles?.jefe_id;
+  const pasaFin = sinJefe || r.estado === "revision_finanzas" || aprs.some((a) => a.etapa === "finanzas") || Number(r.total_aprobado || 0) > 3000;
+  const pasos = ["Borrador", ...(sinJefe ? [] : ["Jefe"]), ...(pasaFin ? ["Finanzas"] : []), "Aprobada", "Reembolsada"];
   let idx = 0, mal = false, etiqueta = null;
   switch (r.estado) {
     case "devuelta": idx = 0; mal = true; etiqueta = "Devuelta"; break;
     case "pendiente_jefe": idx = 1; break;
-    case "revision_finanzas": idx = 2; break;
+    case "revision_finanzas": idx = pasos.indexOf("Finanzas"); break;
     case "aprobada": case "aprobada_parcial": idx = pasos.indexOf("Aprobada"); break;
     case "reembolsada": idx = pasos.length; break;
-    case "rechazada": idx = aprs.some((a) => a.etapa === "finanzas" && a.decision === "rechazado") ? 2 : 1; mal = true; etiqueta = "Rechazada"; break;
+    case "rechazada": idx = aprs.some((a) => a.etapa === "finanzas" && a.decision === "rechazado") ? pasos.indexOf("Finanzas") : 1; mal = true; etiqueta = "Rechazada"; break;
   }
   return `<ol class="tiempo" aria-label="Estado de la rendición">${pasos.map((p, i) => {
     const cls = i < idx ? "hecho" : i === idx ? (mal ? "actual mal" : "actual") : "";
@@ -523,7 +715,7 @@ const NIVEL_TXT = { bad: "Bloquea", need: "Justificar", justified: "Justificado"
 async function vistaDetalle(id) {
   const rid = Number(id);
   const [r, gastos, coms, aprs] = await Promise.all([
-    q(sb.from("rendiciones").select("*,perfiles(nombre,foto_path)").eq("id", rid).maybeSingle()),
+    q(sb.from("rendiciones").select("*,perfiles!empleado_id(nombre,foto_path,jefe_id,pais,moneda),pagador:perfiles!pagado_por(nombre)").eq("id", rid).maybeSingle()),
     q(sb.from("gastos").select("*,gasto_items(*)").eq("rendicion_id", rid).order("id")),
     q(sb.from("comentarios").select("*,perfiles(nombre,foto_path)").eq("rendicion_id", rid).order("fecha")),
     q(sb.from("aprobaciones").select("*,perfiles(nombre)").eq("rendicion_id", rid).order("fecha")),
@@ -538,13 +730,17 @@ async function vistaDetalle(id) {
 
   const duena = r.empleado_id === S.uid;
   const editable = duena && ["borrador", "devuelta"].includes(r.estado);
-  const jefeDecide = S.perfil.rol === "jefe" && r.estado === "pendiente_jefe" && !duena;
-  const finDecide = S.perfil.rol === "finanzas" && r.estado === "revision_finanzas";
-  const finPaga = S.perfil.rol === "finanzas" && ["aprobada", "aprobada_parcial"].includes(r.estado);
+  const jefeDecide = r.estado === "pendiente_jefe" && !duena && r.perfiles?.jefe_id === S.uid;
+  const finDecide = esFinanzas() && r.estado === "revision_finanzas" && !duena;
+  const finPaga = esFinanzas() && ["aprobada", "aprobada_parcial"].includes(r.estado) && !duena;
+  const sinJefe = !r.perfiles?.jefe_id;
   const revisor = !duena;
   const abiertos = (i) => ["pendiente", "a_corregir"].includes(gastos[i].estado);
-  const totTickets = gastos.reduce((s, g) => s + Number(g.total || 0), 0);
-  const aReemb = r.total_aprobado ?? gastos.filter((g) => g.estado !== "rechazado").reduce((s, g) => s + reembolsable(g.gasto_items), 0);
+  const vivos = gastos.filter((g) => g.estado !== "rechazado");
+  const unaMoneda = new Set(gastos.map((g) => g.moneda || "UYU")).size <= 1, mon = gastos[0]?.moneda || "UYU";
+  const aReemb = r.total_aprobado != null
+    ? (unaMoneda && mon !== "UYU" ? dinero(vivos.filter((g) => ["aprobado", "aprobado_parcial"].includes(g.estado)).reduce((s, g) => s + reembolsable(g.gasto_items), 0), mon) + ` <span class="xs muted">≈ ${plata(r.total_aprobado)}</span>` : plata(r.total_aprobado))
+    : totalTickets(vivos, (g) => reembolsable(g.gasto_items));
 
   // Resumen para mirar de un vistazo
   const nBloq = alertas.filter((as, i) => abiertos(i) && as.some((a) => a.nivel === "bad")).length;
@@ -569,8 +765,8 @@ async function vistaDetalle(id) {
       <div class="fila entre"><div><h2>${esc(r.titulo)}</h2>
         <p class="small muted" style="margin-top:4px">Rinde <b>${esc(r.perfiles?.nombre)}</b> · creada ${fecha(r.creada)}${r.enviada ? " · enviada " + fecha(r.enviada) : ""}</p></div>${pill(EST_R, r.estado)}</div>
       ${lineaDeTiempo(r, aprs)}
-      <div class="kpis"><div class="kpi"><span class="v">${plata(totTickets)}</span><span class="k">Total de los tickets</span></div>
-        <div class="kpi"><span class="v">${plata(aReemb)}</span><span class="k">${r.total_aprobado != null ? "Aprobado para reembolsar" : "A reembolsar (sin lo personal)"}</span></div></div>
+      <div class="kpis"><div class="kpi"><span class="v">${totalTickets(gastos)}</span><span class="k">Total de los tickets</span></div>
+        <div class="kpi"><span class="v">${aReemb}</span><span class="k">${r.total_aprobado != null ? "Aprobado para reembolsar" : "A reembolsar (sin lo personal)"}</span></div></div>
       <div class="chips">${chips}</div>
       ${r.estado === "devuelta" && duena ? `<div class="alerta need"><span class="nivel">Devuelta</span><span>Tu jefe pidió corregir algunos tickets. Mirá los comentarios abajo, corregí y volvé a enviar.</span></div>` : ""}
       ${revisor && gastos.length ? `<p class="verificar">${icono("eye")}<span>Las reglas revisan que los números cierren entre sí, no que coincidan con el papel. <b>Compará cada ticket con su foto</b>, sobre todo los marcados en amarillo.</span></p>` : ""}
@@ -584,18 +780,33 @@ async function vistaDetalle(id) {
       <div id="revs" class="lista"></div>
       <div class="fila entre"><span class="small ${nBloq || nFalta ? "error" : "muted"}">${motivoEnvio}</span>
         <span class="fila">${borrable(r) ? `<button class="btn-link peligro" data-a="borrar-rend" data-id="${r.id}" data-titulo="${esc(r.titulo)}" data-volver="1">${icono("trash")} Eliminar borrador</button>` : ""}
-        <button class="btn-p" data-a="enviar" ${!gastos.length || nBloq || nFalta ? "disabled" : ""}>Enviar a mi jefe</button></span></div>
+        <button class="btn-p" data-a="enviar" data-destino="${sinJefe ? "Finanzas" : "tu jefe"}" ${!gastos.length || nBloq || nFalta ? "disabled" : ""}>Enviar a ${sinJefe ? "Finanzas" : "mi jefe"}</button></span></div>
     </section>` : ""}
 
     ${gastos.map((g, i) => tarjetaGasto(g, alertas[i], lecturas[i], { editable, jefeDecide, revisor })).join("")
       || (editable ? "" : `<div class="vacio"><p>Esta rendición no tiene tickets.</p></div>`)}
 
     ${finDecide ? `<section class="card"><h2>Decisión de Finanzas</h2>
-      <p class="small muted">El jefe aprobó ${plata(r.total_aprobado)}. Como supera ${plata(3000)}, necesita tu aprobación.</p>
+      <p class="small muted">${sinJefe ? `${esc(r.perfiles?.nombre)} no tiene jefe asignado: sus gastos los aprobás vos, todos juntos.` : `El jefe aprobó ${plata(r.total_aprobado)}. Como supera ${plata(3000)}, necesita tu aprobación.`}</p>
       <label>Motivo (obligatorio si rechazás)<input id="motivo-fin"></label>
       <div class="fila"><button class="btn-p" data-a="fin" data-ok="1">Aprobar</button><button class="btn-mal" data-a="fin" data-ok="0">Rechazar</button></div></section>` : ""}
-    ${finPaga ? `<section class="card"><div class="fila entre"><div><h2>Reembolso</h2><p class="small muted">Cuando hagas la transferencia en el banco, marcala como pagada.</p></div>
-      <button class="btn-p" data-a="pagar">Marcar como reembolsada · ${plata(r.total_aprobado)}</button></div></section>` : ""}
+    ${finPaga ? `<form class="card" data-form="pago"><h2>Registrar el reembolso · ${aReemb}</h2>
+      <p class="small muted">Primero hacé la transferencia en el banco. Después anotá acá sus datos: la persona los ve y confirma que la recibió.</p>
+      <div class="campos"><label>Fecha del pago<input name="fecha" type="date" value="${new Date().toISOString().slice(0, 10)}" max="${new Date().toISOString().slice(0, 10)}" required></label>
+        <label>Medio<input name="medio" list="medios-reembolso" placeholder="Transferencia BROU" required></label>
+        <label>N.º de comprobante de la transferencia<input name="referencia" required placeholder="Ej.: TRF-0045821"></label>
+        <label>Comprobante (foto, opcional)<input name="archivo" type="file" accept="image/*"></label></div>
+      <datalist id="medios-reembolso">${["Transferencia BROU", "Transferencia Itaú", "Transferencia Santander", "Transferencia Scotiabank", "Transferencia BBVA", "Pix", "Transferencia bancaria (Argentina)", "Transferencia bancaria (Chile)", "Efectivo"].map((m) => `<option value="${m}">`).join("")}</datalist>
+      <div><button class="btn-p">Marcar como reembolsada</button></div></form>` : ""}
+    ${r.estado === "reembolsada" ? `<section class="card pago"><h2>Reembolso pagado</h2>
+      ${r.pago_fecha ? `<dl class="datos"><div><dt>Fecha</dt><dd>${fecha(r.pago_fecha)}</dd></div><div><dt>Medio</dt><dd>${esc(r.pago_medio)}</dd></div>
+        <div><dt>N.º de comprobante</dt><dd>${esc(r.pago_referencia)}</dd></div><div><dt>Registró</dt><dd>${esc(r.pagador?.nombre || "Finanzas")}</dd></div>
+        <div><dt>Monto</dt><dd><b>${aReemb}</b></dd></div></dl>
+        ${r.pago_comprobante ? `<div><button class="btn" data-ver="${esc(r.pago_comprobante)}">${icono("eye")} Ver comprobante de la transferencia</button></div>` : ""}`
+        : `<p class="small muted">Se marcó como pagada antes de que la app pidiera los datos del pago.</p>`}
+      ${r.pago_confirmado ? `<p class="alerta ok"><span class="nivel">Recibido</span><span>${esc(r.perfiles?.nombre)} confirmó que lo recibió el ${fecha(r.pago_confirmado)}.</span></p>`
+        : duena ? `<div class="fila entre"><span class="small">¿Ya te llegó la plata? Confirmalo para cerrar la rendición.</span><button class="btn-p" data-a="recibido">Confirmar que lo recibí</button></div>`
+        : `<p class="alerta warn"><span class="nivel">Sin confirmar</span><span>${esc(r.perfiles?.nombre)} todavía no confirmó que recibió el pago.</span></p>`}</section>` : ""}
 
     <section class="card"><h2>Historial y comentarios</h2><div class="hilo">
       ${aprs.map((a) => `<div class="msg"><div class="quien">${esc(a.perfiles?.nombre)} · ${a.etapa === "jefe" ? "Jefe" : "Finanzas"} · ${fecha(a.fecha)}</div>
@@ -611,8 +822,9 @@ function tarjetaGasto(g, alertas, lectura, { editable, jefeDecide, revisor }) {
   const decide = jefeDecide && g.estado === "pendiente";
   const corr = new Set(lectura?.campos_corregidos || []);
   const leido = lectura?.leido || {};
-  const valor = (k) => ["neto", "iva", "total"].includes(k) ? plata(g[k]) : k === "fecha" ? fecha(g.fecha) : esc(g[k] ?? "—");
-  const antes = (k) => { const v = leido[k]; return v == null || v === "" ? "vacío" : k === "tipo_comprobante" ? esc(TIPOS[v] || v) : ["neto", "iva", "total"].includes(k) ? plata(v) : k === "fecha" ? fecha(v) : esc(v); };
+  const mon = g.moneda || "UYU", pais = PAISES[paisDeMoneda(mon)];
+  const valor = (k) => ["neto", "iva", "total"].includes(k) ? dinero(g[k], mon) : k === "fecha" ? fecha(g.fecha) : esc(g[k] ?? "—");
+  const antes = (k) => { const v = leido[k]; return v == null || v === "" ? "vacío" : k === "tipo_comprobante" ? esc(TIPOS[v] || v) : ["neto", "iva", "total"].includes(k) ? dinero(v, leido.moneda || mon) : k === "fecha" ? fecha(v) : esc(v); };
   const dato = (k, etiqueta, html) => `<div><dt>${etiqueta}</dt><dd class="${corr.has(k) ? "corregido" : ""}">${html ?? valor(k)}${corr.has(k) ? `<span class="antes">Corregido a mano · la IA leyó: ${antes(k)}</span>` : ""}</dd></div>`;
   const nAlertas = alertas.length;
   const alertasHtml = nAlertas ? alertas.map((a) => {
@@ -625,22 +837,24 @@ function tarjetaGasto(g, alertas, lectura, { editable, jefeDecide, revisor }) {
   return `<article class="card" id="g-${g.id}">
     <div class="gasto">${fotoTicket(g.foto_path, g.comercio)}
       <div class="lista">
-        <div class="fila entre"><h3>${esc(g.comercio || "Sin comercio")}</h3><div class="fila">${g.tipo_comprobante === "pago" ? `<span class="etq warn">Sin e-Ticket</span>` : ""}${lectura?.confianza != null ? `<span class="etq ${Number(lectura.confianza) < 0.7 ? "warn" : ""}">IA ${Math.round(lectura.confianza * 100)} %</span>` : `<span class="etq">Carga manual</span>`}${pill(EST_G, g.estado)}</div></div>
+        <div class="fila entre"><h3>${esc(g.comercio || "Sin comercio")}</h3><div class="fila">${mon !== "UYU" ? `<span class="etq info">${esc(mon)}</span>` : ""}${g.tipo_comprobante === "pix" ? `<span class="etq warn">Pix</span>` : g.tipo_comprobante === "pago" ? `<span class="etq warn">Sin comprobante fiscal</span>` : ""}${lectura?.confianza != null ? `<span class="etq ${Number(lectura.confianza) < 0.7 ? "warn" : ""}">IA ${Math.round(lectura.confianza * 100)} %</span>` : `<span class="etq">Carga manual</span>`}${pill(EST_G, g.estado)}</div></div>
         <dl class="datos">${dato("fecha", "Fecha")}${dato("categoria", "Categoría", esc(CATEGORIAS[g.categoria] || g.categoria))}
-          ${g.tipo_comprobante === "pago"
-            ? `${dato("tipo_comprobante", "Comprobante", esc("Pago con POS" + (g.medio_pago ? " · " + g.medio_pago : "")))}${dato("nro_operacion", "N.º de operación")}${dato("total", "Total")}`
-            : `${dato("rut_emisor", "RUT")}${dato("numero", "Serie y número", esc(`${g.serie || ""} ${g.numero || "—"}`.trim()))}${dato("neto", "Neto")}${dato("iva", "IVA")}${dato("total", "Total")}`}
-          <div><dt>Se reembolsa</dt><dd><b>${plata(reembolsable(g.gasto_items))}</b></dd></div></dl>
+          ${g.tipo_comprobante === "pix"
+            ? `${dato("tipo_comprobante", "Comprobante", "Comprovante Pix")}${dato("nro_operacion", "ID de la transacción")}${dato("total", "Total")}`
+            : g.tipo_comprobante === "pago"
+            ? `${dato("tipo_comprobante", "Comprobante", esc("Pago" + (g.medio_pago ? " · " + g.medio_pago : "")))}${dato("nro_operacion", "N.º de operación")}${g.iva != null ? dato("iva", "IVA") : ""}${dato("total", "Total")}`
+            : `${dato("rut_emisor", pais.id.replace(" emisor", ""))}${dato("numero", "Serie y número", esc(`${g.serie || ""} ${g.numero || "—"}`.trim()))}${dato("neto", "Neto")}${dato("iva", "IVA")}${dato("total", "Total")}`}
+          <div><dt>Se reembolsa</dt><dd><b>${dinero(reembolsable(g.gasto_items), mon)}</b>${mon !== "UYU" ? `<span class="antes">≈ ${plata(reembolsable(g.gasto_items) * Number(g.tasa_uyu || 1))}</span>` : ""}</dd></div></dl>
         <div class="alertas">${alertasHtml}</div>
         <div class="tabla-wrap"><table class="lineas"><thead><tr><th>Línea</th><th class="r">Importe</th>${gEditable ? '<th class="c">Personal</th>' : ""}${decide ? '<th class="c">No reconocer</th>' : ""}</tr></thead><tbody>
           ${g.gasto_items.map((i) => `<tr class="${!i.reembolsable || i.es_alcohol || i.no_reconocido_por ? "tachada" : ""}">
             <td class="desc">${esc(i.descripcion)}${i.es_alcohol ? '<span class="tag alc">Alcohol · no se reembolsa</span>' : !i.reembolsable ? '<span class="tag per">Personal</span>' : ""}${i.no_reconocido_por ? `<span class="tag nr" title="${esc(i.motivo_no_reconocido)}">No reconocido</span>` : ""}</td>
-            <td class="r num">${plata(i.importe)}</td>
+            <td class="r num">${dinero(i.importe, mon)}</td>
             ${gEditable ? `<td class="c"><input type="checkbox" data-a="personal" data-item="${i.id}" ${!i.reembolsable || i.es_alcohol ? "checked" : ""} ${i.es_alcohol ? 'disabled title="El alcohol nunca se reembolsa"' : ""} aria-label="Marcar ${esc(i.descripcion)} como personal"></td>` : ""}
             ${decide ? `<td class="c">${i.es_alcohol ? "—" : `<input type="checkbox" class="nr-${g.id}" value="${i.id}" aria-label="No reconocer ${esc(i.descripcion)}">`}</td>` : ""}
           </tr>`).join("") || `<tr><td class="muted" colspan="3">Sin líneas</td></tr>`}</tbody></table></div>
         ${gEditable ? `<label>Justificación${necesita ? ' <b class="error">· necesaria para enviar</b>' : " (opcional)"}
-            <textarea data-just="${g.id}" placeholder="${g.tipo_comprobante === "pago" ? "¿Por qué no hay e-Ticket? Ej.: el taxi solo da el comprobante del POS" : "¿Por qué se pasa del tope o no cierra? Ej.: cena con el cliente de Ceibo"}">${esc(g.justificacion || "")}</textarea></label>
+            <textarea data-just="${g.id}" placeholder="${g.tipo_comprobante === "pix" ? "¿Por qué no hay nota fiscal? Ej.: pagué por Pix y el local no la emitió" : g.tipo_comprobante === "pago" ? "¿Por qué no hay comprobante fiscal? Ej.: el taxi solo da el comprobante del POS" : "¿Por qué se pasa del tope o no cierra? Ej.: cena con el cliente de Ceibo"}">${esc(g.justificacion || "")}</textarea></label>
           <div class="fila"><button data-a="just" data-gasto="${g.id}">Guardar justificación</button><button data-a="editar" data-gasto="${g.id}">Corregir datos</button>
             <button class="btn-mal" data-a="borrar" data-gasto="${g.id}">Borrar ticket</button></div>`
           : g.justificacion && !alertas.some((a) => claseAlerta(a) === "justified") ? `<p class="small"><b>Justificación:</b> ${esc(g.justificacion)}</p>` : ""}
@@ -653,7 +867,7 @@ function tarjetaGasto(g, alertas, lectura, { editable, jefeDecide, revisor }) {
 }
 
 // ---------------------------------------------------------------- lectura con IA y formulario de revisión
-const vacio = () => ({ tipo_comprobante: "cfe", medio_pago: "", nro_operacion: "", comercio: "", fecha: "", rut_emisor: "", serie: "", numero: "", categoria: "otros", neto: "", iva: "", total: "", justificacion: "", items: [{ descripcion: "", importe: "" }] });
+const vacio = () => ({ tipo_comprobante: "cfe", moneda: S.perfil?.moneda || "UYU", medio_pago: "", nro_operacion: "", comercio: "", fecha: "", rut_emisor: "", serie: "", numero: "", categoria: "otros", neto: "", iva: "", total: "", justificacion: "", items: [{ descripcion: "", importe: "" }] });
 async function achicar(file, lado = 1600) {
   try {
     const bmp = await createImageBitmap(file);
@@ -721,53 +935,65 @@ function pintarRev(rev) {
 }
 function filaItem(i = {}) {
   const alc = !!i.es_alcohol;
-  return `<div class="campos it-row">
-    <label>Línea<input data-f="descripcion" value="${esc(i.descripcion)}"></label>
-    <label>Importe<input data-f="importe" inputmode="decimal" value="${esc(i.importe)}"></label>
-    <label class="check"><input type="checkbox" data-f="es_alcohol" ${alc ? "checked" : ""}>Alcohol</label>
-    <label class="check" title="${alc ? "El alcohol nunca se reembolsa" : ""}"><input type="checkbox" data-f="personal" ${alc || i.reembolsable === false ? "checked" : ""} ${alc ? "disabled" : ""}>Personal</label>
-    <button type="button" class="btn-link" data-a="quitar-linea" aria-label="Quitar línea">${icono("close")}</button>
+  // En el celular: descripción arriba; importe y "Quitar" en la misma fila; Alcohol y Personal abajo
+  return `<div class="it-row">
+    <label class="it-desc">Línea<input data-f="descripcion" value="${esc(i.descripcion)}"></label>
+    <label class="it-imp">Importe<input data-f="importe" inputmode="decimal" value="${esc(i.importe)}"></label>
+    <button type="button" class="it-quitar" data-a="quitar-linea" aria-label="Quitar esta línea" title="Quitar línea">${icono("trash")}<span>Quitar</span></button>
+    <div class="it-marcas"><label class="check"><input type="checkbox" data-f="es_alcohol" ${alc ? "checked" : ""}>Alcohol</label>
+      <label class="check" title="${alc ? "El alcohol nunca se reembolsa" : ""}"><input type="checkbox" data-f="personal" ${alc || i.reembolsable === false ? "checked" : ""} ${alc ? "disabled" : ""}>Personal</label></div>
   </div>`;
 }
 function htmlRev(rev) {
   const fotoHtml = rev.preview ? `<button type="button" class="foto ${rev.estado === "leyendo" ? "leyendo" : ""}" data-ver-local="${esc(rev.preview)}" aria-label="Ver la foto en grande"><img src="${esc(rev.preview)}" alt="Ticket subido"><span class="lupa">${icono("zoomin")} Ver</span></button>` : `<div class="foto">Carga manual</div>`;
-  if (rev.estado === "leyendo") return `<div class="card"><div class="gasto">${fotoHtml}<div class="lista"><h3>La IA está leyendo el ticket…</h3><p class="small muted">Busca RUT, serie, número, fecha, comercio, montos, IVA y cada línea.</p></div></div></div>`;
+  if (rev.estado === "leyendo") return `<div class="card"><div class="gasto">${fotoHtml}<div class="lista"><h3>La IA está leyendo el ticket…</h3><p class="small muted">Busca el tipo de comprobante, la moneda, el número de empresa, la fecha, el comercio, los montos, el IVA y cada línea.</p></div></div></div>`;
   const d = rev.datos;
-  return `<form class="card" data-form="rev" data-key="${rev.key}" data-tipo="${d.tipo_comprobante === "pago" ? "pago" : "cfe"}">
+  const pais = PAISES[S.perfil.pais] || PAISES.UY;
+  const tipos = { ...pais.tipos, ...(d.tipo_comprobante === "pix" && !pais.tipos.pix ? { pix: TIPOS.pix } : {}) };
+  const tipo = tipos[d.tipo_comprobante] ? d.tipo_comprobante : "cfe";
+  const mon = d.moneda || S.perfil.moneda || "UYU";
+  return `<form class="card" data-form="rev" data-key="${rev.key}" data-tipo="${tipo}">
     <datalist id="medios-pago">${MEDIOS.map((m) => `<option value="${m}">`).join("")}</datalist><div class="gasto">${fotoHtml}<div class="lista">
     <div class="fila entre"><h3>${rev.gastoId ? "Corregir ticket" : "Revisá lo que leyó la IA"}</h3>${rev.modelo ? `<span class="xs muted">${esc(rev.modelo)}${d.confianza ? ` · confianza ${Math.round(d.confianza * 100)} %` : ""}</span>` : ""}</div>
     ${rev.error ? `<div class="alerta warn"><span class="nivel">Atención</span><span>${esc(rev.error)}</span></div>
       ${rev.path && !rev.gastoId ? `<div><button type="button" data-a="reintentar" data-key="${rev.key}">${icono("refresh")} Reintentar lectura</button></div>` : ""}` : ""}
     <fieldset class="tipo-comp"><legend>Tipo de comprobante</legend>
-      ${Object.entries(TIPOS).map(([v, t]) => `<label class="opcion"><input type="radio" name="tipo_comprobante" value="${v}" ${(d.tipo_comprobante || "cfe") === v ? "checked" : ""}>${t}</label>`).join("")}
+      ${Object.entries(tipos).map(([v, t]) => `<label class="opcion"><input type="radio" name="tipo_comprobante" value="${v}" ${tipo === v ? "checked" : ""}>${t}</label>`).join("")}
     </fieldset>
-    <p class="alerta info solo-pago"><span class="nivel">POS</span><span>Un comprobante de pago no es un e-Ticket: no tiene RUT ni IVA. Se puede rendir, pero vas a tener que explicar por qué no hay e-Ticket. Si podés, pedíselo al comercio.</span></p>
+    <p class="alerta info solo-pagos"><span class="nivel">Pago</span><span>Un comprobante de pago (POS, Prex, Mercado Pago) no es un comprobante fiscal. Se puede rendir, pero vas a tener que explicar por qué no hay ${S.perfil.pais === "UY" ? "e-Ticket" : "factura"}. Si podés, pedíselo al comercio.</span></p>
+    <p class="alerta info solo-pix"><span class="nivel">Pix</span><span>El comprovante Pix prueba que pagaste, pero no es una nota fiscal. Se puede rendir explicando por qué no hay nota fiscal.</span></p>
     <div class="campos">
       <label>Comercio<input name="comercio" value="${esc(d.comercio)}" required></label>
       <label>Fecha<input name="fecha" type="date" value="${esc(d.fecha)}" required></label>
       <label>Categoría<select name="categoria">${Object.entries(CATEGORIAS).map(([v, t]) => `<option value="${v}" ${d.categoria === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
-      <label class="solo-pago">Medio de pago<input name="medio_pago" list="medios-pago" value="${esc(d.medio_pago)}" placeholder="Mercado Pago, OCA…"></label>
-      <label class="solo-pago">N.º de operación<input name="nro_operacion" inputmode="numeric" value="${esc(d.nro_operacion)}"></label>
-      <label class="solo-cfe">RUT emisor<input name="rut_emisor" inputmode="numeric" value="${esc(d.rut_emisor)}"></label>
+      <label>Moneda<select name="moneda">${(Object.keys(S.monedas).length ? Object.values(S.monedas) : Object.entries(SIMBOLO).map(([codigo, simbolo]) => ({ codigo, simbolo, nombre: codigo })))
+        .map((m) => `<option value="${m.codigo}" ${mon === m.codigo ? "selected" : ""}>${esc(m.simbolo)} · ${esc(m.nombre)}</option>`).join("")}</select></label>
+      <label class="solo-pagos">Medio de pago<input name="medio_pago" list="medios-pago" value="${esc(d.medio_pago)}" placeholder="Mercado Pago, Prex, OCA…"></label>
+      <label class="no-cfe"><span class="solo-pagos">N.º de operación</span><span class="solo-pix">ID de la transacción</span><input name="nro_operacion" value="${esc(d.nro_operacion)}"></label>
+      <label class="solo-cfe">${esc(pais.id)}<input name="rut_emisor" value="${esc(d.rut_emisor)}"></label>
       <label class="solo-cfe">Serie<input name="serie" value="${esc(d.serie)}"></label>
-      <label class="solo-cfe">Número<input name="numero" value="${esc(d.numero)}"></label>
-      <label class="solo-cfe">Neto (sin IVA)<input name="neto" inputmode="decimal" value="${esc(d.neto)}"></label>
-      <label class="solo-cfe">IVA<input name="iva" inputmode="decimal" value="${esc(d.iva)}"></label>
+      <label class="solo-cfe">Número o folio<input name="numero" value="${esc(d.numero)}"></label>
+      <label class="no-pix">Neto (sin IVA)<span class="solo-pagos xs muted"> · si figura</span><input name="neto" inputmode="decimal" value="${esc(d.neto)}"></label>
+      <label class="no-pix">IVA<span class="solo-pagos xs muted"> · si figura</span><input name="iva" inputmode="decimal" value="${esc(d.iva)}"></label>
       <label>Total<input name="total" inputmode="decimal" value="${esc(d.total)}" required></label>
     </div>
     <div class="lista items">${(d.items || []).map(filaItem).join("")}</div>
     <div class="fila entre"><button type="button" class="btn-link" data-a="agregar-linea">+ Agregar línea</button><span class="small suma"></span></div>
-    <label>Justificación (si se pasa del tope, algo no cierra o no hay e-Ticket)<textarea name="justificacion">${esc(d.justificacion)}</textarea></label>
+    <label>Justificación (si se pasa del tope, algo no cierra o no hay comprobante fiscal)<textarea name="justificacion">${esc(d.justificacion)}</textarea></label>
     <div class="fila"><button class="btn-p">Guardar ticket</button><button type="button" data-a="descartar" data-key="${rev.key}">Descartar</button></div>
   </div></div></form>`;
 }
 function leerForm(form) {
   const v = (n) => form.querySelector(`[name="${n}"]`)?.value ?? "";
-  const pago = form.querySelector('[name="tipo_comprobante"]:checked')?.value === "pago";
+  const tipo = form.querySelector('[name="tipo_comprobante"]:checked')?.value || "cfe";
+  const cfe = tipo === "cfe", pix = tipo === "pix";
   return {
-    tipo_comprobante: pago ? "pago" : "cfe", medio_pago: pago ? v("medio_pago").trim() : "", nro_operacion: pago ? v("nro_operacion").replace(/[^\dA-Za-z-]/g, "") : "",
-    comercio: v("comercio").trim(), fecha: v("fecha"), categoria: v("categoria"), rut_emisor: pago ? "" : v("rut_emisor").replace(/\D/g, ""),
-    serie: pago ? "" : v("serie").trim(), numero: pago ? "" : v("numero").trim(), neto: pago ? null : numero(v("neto")), iva: pago ? null : numero(v("iva")), total: numero(v("total")),
+    tipo_comprobante: tipo, moneda: v("moneda") || S.perfil.moneda || "UYU",
+    medio_pago: pix ? "Pix" : cfe ? "" : v("medio_pago").trim(), nro_operacion: cfe ? "" : v("nro_operacion").replace(/[^\dA-Za-z-]/g, ""),
+    comercio: v("comercio").trim(), fecha: v("fecha"), categoria: v("categoria"),
+    rut_emisor: cfe ? v("rut_emisor").replace(/[^\dkK]/g, "").toUpperCase() : "",
+    serie: cfe ? v("serie").trim() : "", numero: cfe ? v("numero").trim() : "",
+    neto: pix ? null : numero(v("neto")), iva: pix ? null : numero(v("iva")), total: numero(v("total")),
     justificacion: v("justificacion").trim(),
     items: [...form.querySelectorAll(".it-row")].map((row) => {
       const alc = row.querySelector('[data-f="es_alcohol"]').checked;
@@ -787,7 +1013,7 @@ function actualizarSuma(box) {
   if (!form) return;
   const d = leerForm(form), suma = d.items.reduce((s, i) => s + (i.importe || 0), 0);
   const cierra = d.total !== null && Math.abs(suma - d.total) <= 1;
-  form.querySelector(".suma").innerHTML = `Las líneas suman <b class="num">${plata(suma)}</b> ${d.total === null ? "" : cierra ? "· coincide con el total ✓" : `· <span class="error">no coincide con el total</span>`}`;
+  form.querySelector(".suma").innerHTML = `Las líneas suman <b class="num">${dinero(suma, d.moneda)}</b> ${d.total === null ? "" : cierra ? "· coincide con el total ✓" : `· <span class="error">no coincide con el total</span>`}${d.moneda !== "UYU" && d.total ? ` <span class="muted">· ≈ ${plata(d.total * tasa(d.moneda))}</span>` : ""}`;
 }
 async function guardarRev(form) {
   const rev = S.revisiones.find((r) => r.key === form.dataset.key);
@@ -869,8 +1095,9 @@ const acciones = {
   just: (b) => { const id = Number(b.dataset.gasto);
     hacer(() => rpc("set_justificacion", { p_gasto: id, p_texto: $(`[data-just="${id}"]`).value }), "Justificación guardada"); },
   personal: (b) => hacer(() => rpc("set_item_personal", { p_item: Number(b.dataset.item), p_personal: b.checked })),
-  enviar: async () => { if (await confirmar("¿Enviar la rendición a tu jefe? Mientras la revisa no la vas a poder modificar.", { ok: "Enviar" }))
-    hacer(() => rpc("enviar_rendicion", { p_rend: S.rendId }), "Enviada a tu jefe"); },
+  enviar: async (b) => { const a = b.dataset.destino || "tu jefe";
+    if (await confirmar(`¿Enviar la rendición a ${a}? Mientras la revisa no la vas a poder modificar.`, { ok: "Enviar" }))
+      hacer(() => rpc("enviar_rendicion", { p_rend: S.rendId }), `Enviada a ${a}`); },
   decidir: (b) => {
     const id = Number(b.dataset.gasto), motivo = $("#m-" + id).value;
     const nr = [...document.querySelectorAll(".nr-" + id + ":checked")].map((c) => Number(c.value));
@@ -879,9 +1106,9 @@ const acciones = {
   },
   fin: (b) => hacer(() => rpc("decidir_finanzas", { p_rend: S.rendId, p_aprobar: b.dataset.ok === "1", p_motivo: $("#motivo-fin").value }),
     b.dataset.ok === "1" ? "Aprobada por Finanzas" : "Rechazada por Finanzas"),
-  pagar: async () => { if (await confirmar("¿Ya hiciste la transferencia? La rendición queda como reembolsada.", { ok: "Sí, marcar reembolsada" }))
-    hacer(() => rpc("marcar_reembolsada", { p_rend: S.rendId }), "Marcada como reembolsada"); },
-  csv: () => descargarCsv(),
+  recibido: async () => { if (await confirmar("¿Confirmás que ya recibiste el pago de este reembolso?", { ok: "Sí, lo recibí" }))
+    hacer(() => rpc("confirmar_recepcion", { p_rend: S.rendId }), "¡Listo! Rendición cerrada"); },
+  exportar: (b) => { b.closest("details")?.removeAttribute("open"); exportar(b.dataset.f).catch((e) => toast("No se pudo descargar: " + msg(e), true)); },
   reiniciar: async () => { if (await confirmar("Se borran todas las rendiciones y se cargan las de ejemplo. ¿Seguimos?", { ok: "Reiniciar", peligro: true }))
     hacer(() => rpc("reiniciar_demo"), "Datos demo reiniciados"); },
 };
@@ -947,7 +1174,7 @@ app.addEventListener("change", (e) => {
   }
   if (e.target.matches('[name="tipo_comprobante"]')) {
     const form = e.target.closest("form"); form.dataset.tipo = e.target.value;
-    if (e.target.value === "pago" && form.querySelector('[name="categoria"]').value === "otros" && /taxi|uber|cabify|remise/i.test(form.querySelector('[name="comercio"]').value))
+    if (e.target.value !== "cfe" && form.querySelector('[name="categoria"]').value === "otros" && /taxi|uber|cabify|remise/i.test(form.querySelector('[name="comercio"]').value))
       form.querySelector('[name="categoria"]').value = "traslados";
   }
   if (e.target.matches('[data-f="es_alcohol"]')) {
@@ -959,6 +1186,10 @@ app.addEventListener("change", (e) => {
   const box = e.target.closest("[data-rev]"); if (box) actualizarSuma(box);
 });
 app.addEventListener("input", (e) => {
+  if (e.target.matches("[data-filtro-usuarios]")) {
+    const t = e.target.value.toLowerCase().trim();
+    document.querySelectorAll("#usuarios form").forEach((f) => (f.hidden = t && !f.textContent.toLowerCase().includes(t)));
+  }
   if (e.target.matches("[data-filtro]")) {
     const t = e.target.value.toLowerCase().trim();
     e.target.closest(".lista, main").querySelectorAll(".fila-wrap").forEach((w) => (w.hidden = t && !w.querySelector(".fila-r").dataset.texto.includes(t)));
@@ -974,6 +1205,30 @@ app.addEventListener("submit", async (e) => {
   if (tipo === "nueva") hacer(async () => { const id = await rpc("crear_rendicion", { p_titulo: f.titulo.value }); location.hash = `#/r/${id}`; }, "Rendición creada");
   if (tipo === "comentar") hacer(() => rpc("comentar", { p_rend: S.rendId, p_texto: f.texto.value, p_gasto: null }), "Comentario agregado");
   if (tipo === "rev") guardarRev(f);
+  if (tipo === "pago") {
+    if (!(await confirmar(`¿Ya hiciste la transferencia? La rendición queda como reembolsada con el comprobante ${f.referencia.value}.`, { ok: "Sí, marcar reembolsada" }))) return;
+    hacer(async () => {
+      let path = null;
+      const file = f.archivo.files[0];
+      if (file) {
+        const blob = await achicar(file);
+        path = `${S.uid}/pago-${S.rendId}-${Date.now()}.jpg`;
+        const up = await sb.storage.from("tickets").upload(path, blob, { contentType: "image/jpeg", upsert: false });
+        if (up.error) throw up.error;
+      }
+      await rpc("marcar_reembolsada", { p_rend: S.rendId, p_fecha: f.fecha.value, p_medio: f.medio.value, p_referencia: f.referencia.value, p_comprobante: path });
+    }, "Reembolso registrado");
+  }
+  if (tipo === "usuario") {
+    const accion = e.submitter?.value || "guardar";
+    const estado = accion === "aprobar" ? "activa" : accion === "rechazar" ? "rechazada" : f.estado.value;
+    if (accion === "rechazar" && !(await confirmar("¿Rechazar esta solicitud? La persona no va a poder usar la app.", { ok: "Rechazar", peligro: true }))) return;
+    hacer(() => rpc("admin_guardar_usuario", { p_id: f.dataset.id, p_rol: f.rol.value, p_jefe: f.jefe.value || null, p_pais: f.pais.value, p_area: f.area.value, p_estado: estado }),
+      accion === "aprobar" ? "Usuario aprobado" : accion === "rechazar" ? "Solicitud rechazada" : "Usuario actualizado");
+  }
+  if (tipo === "tasa") hacer(() => rpc("guardar_tasa", { p_codigo: f.dataset.codigo, p_tasa: numero(f.tasa.value) }).then(async () => {
+    S.monedas = Object.fromEntries((await q(sb.from("monedas").select("*"))).map((m) => [m.codigo, m])); }), "Tasa guardada");
+  if (tipo === "tope") hacer(() => rpc("guardar_tope", { p_categoria: f.dataset.cat, p_tope: numero(f.tope.value) }), "Tope guardado");
   if (tipo === "perfil") hacer(async () => { await rpc("actualizar_perfil", { p_nombre: f.nombre.value, p_foto: null }); await cargarPerfil(); pintarCuenta(); }, "Datos guardados");
   if (tipo === "clave" || tipo === "recuperar") {
     if (f.c1.value.length < 6) return toast("La contraseña tiene que tener al menos 6 caracteres.", true);
@@ -987,6 +1242,6 @@ app.addEventListener("submit", async (e) => {
 
 const VISTAS = { inicio: vistaInicio, nueva: vistaNueva, rendiciones: vistaRendiciones, aprobar: vistaAprobar, equipo: vistaEquipo,
   revision: vistaRevision, reembolsar: vistaReembolsar, historial: vistaHistorial, totales: vistaTotales, calidad: vistaCalidad,
-  perfil: vistaPerfil, r: vistaDetalle };
+  perfil: vistaPerfil, r: vistaDetalle, usuarios: vistaUsuarios, todas: vistaTodas, config: vistaConfig };
 
 arrancar();

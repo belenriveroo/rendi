@@ -301,8 +301,18 @@ table.t .r { text-align: right; }
 @keyframes scan { 0% { top: 4%; } 50% { top: 94%; } 100% { top: 4%; } }
 .subir { border: 2px dashed var(--rule); border-radius: var(--r); padding: 22px; display: grid; gap: 10px; justify-items: center; text-align: center; }
 .subir input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
-.it-row { grid-template-columns: minmax(0, 3fr) minmax(0, 1.2fr) auto auto auto; align-items: end; }
-@media (max-width: 560px) { .it-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+/* Una línea del ticket. Compu: todo en una fila. Celular: descripción arriba; importe y "Quitar" juntos; Alcohol y Personal abajo */
+.it-row { display: grid; gap: 8px 12px; align-items: end; grid-template-columns: minmax(0, 3fr) minmax(0, 1.2fr) auto auto;
+  grid-template-areas: "desc imp marcas quitar"; padding-bottom: 10px; border-bottom: 1px dashed var(--rule); }
+.it-desc { grid-area: desc; } .it-imp { grid-area: imp; } .it-marcas { grid-area: marcas; display: flex; gap: 14px; align-items: center; min-height: 42px; }
+.it-quitar { grid-area: quitar; display: inline-flex; align-items: center; gap: 6px; min-height: 42px; padding: 0 12px; color: var(--bad); border-color: var(--rule); background: transparent; }
+.it-quitar .ico { width: 16px; height: 16px; }
+.it-quitar span { font-size: .85rem; }
+@media (min-width: 561px) { .it-quitar span { display: none; } }
+@media (max-width: 560px) {
+  .it-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "desc desc" "imp quitar" "marcas marcas"; }
+  .it-marcas { min-height: 0; }
+}
 
 /* ---------- cargando */
 .esqueleto { display: grid; gap: 12px; }
@@ -380,3 +390,19 @@ form[data-tipo="cfe"] .solo-pago, form[data-tipo="pago"] .solo-cfe { display: no
   .fila-wrap.borrable .fila-r .lado > .ico { display: none; }
 }
 .fila-wrap, .fila-wrap button { -webkit-tap-highlight-color: transparent; }
+
+/* ---------- v5: tipos de comprobante por país, descargas, usuarios, reembolso */
+form[data-tipo] .solo-pagos, form[data-tipo] .solo-pix { display: none; }
+form[data-tipo="pago"] .solo-pagos, form[data-tipo="pix"] .solo-pix { display: revert; }
+form[data-tipo="pago"] p.solo-pagos, form[data-tipo="pix"] p.solo-pix { display: grid; }
+form[data-tipo="cfe"] .no-cfe, form[data-tipo="pix"] .no-pix, form[data-tipo="pago"] .solo-cfe, form[data-tipo="pix"] .solo-cfe { display: none; }
+.cabecera { align-items: flex-start; }
+.descargar { position: relative; flex: none; }
+.descargar summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.descargar summary::-webkit-details-marker { display: none; }
+.menu-desc { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; background: var(--sheet); border: 1px solid var(--rule); border-radius: 10px; box-shadow: var(--shadow); padding: 6px; display: grid; min-width: 180px; }
+.menu-desc button { border: 0; background: none; text-align: left; padding: 10px 12px; border-radius: 7px; min-height: 0; }
+.menu-desc button:hover { background: var(--stamp-soft); }
+.usuario.pendiente { border-color: var(--warn, #9a5a06); }
+.usuario h3 { margin: 0; }
+.pago .datos { margin-bottom: 8px; }
